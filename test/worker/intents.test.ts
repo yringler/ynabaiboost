@@ -7,6 +7,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDays, todayIn } from "../../src/shared/dates";
 import { CandidatesRes, CreateIntentsRes, IntentRes, IntentsRes } from "../../src/shared/api";
 import { auditLog, intentLines, intents, matches, reviews } from "../../src/worker/db/schema";
+import { fmtDate } from "../../src/worker/domain/labels";
+import { stripAttribution } from "../../src/worker/domain/memo";
 import type { AppEnv } from "../../src/worker/env";
 import type { YnabTxn } from "../../src/worker/ynab/types";
 import { FakeYnab, cacheTxns, db, mkTxn, seedIntent, seedUser, uid } from "./wp5-helpers";
@@ -318,7 +320,7 @@ describe("PATCH /api/intents/:id", () => {
     const i = IntentRes.parse(r.json).intent;
     expect(i).toMatchObject({ totalAmount: 150000, tolerance: 25000, memo: "bulk", date: addDays(TODAY, -3), placeholder: { amount: 149990 } });
     expect(fake.callsOf("updateTransactions")[0]?.args[1]).toEqual([{
-      id: created.placeholder.txnId, amount: -149990, date: addDays(TODAY, -3), categoryId: "cat-groceries", memo: `≈ bulk [aib:${created.shortRef}]`,
+      id: created.placeholder.txnId, amount: -149990, date: addDays(TODAY, -3), categoryId: "cat-groceries", memo: `≈ bulk · AI Boost: edited in the app (${fmtDate(TODAY)}) [aib:${created.shortRef}]`,
     }]);
   });
   it("changing the account replaces the placeholder", async () => {
@@ -389,7 +391,7 @@ describe("extend / cancel / keep", () => {
     expect(i).toMatchObject({ status: "resolved", placeholder: { status: "final" } });
     // The final record carries the un-nudged total (199.99 placeholder → 200.00) and the line's category.
     expect(fake.callsOf("updateTransactions")[0]?.args[1]).toEqual([{
-      id: created.placeholder.txnId, memo: `groceries [aib:${created.shortRef}]`, amount: -200000, categoryId: "cat-groceries",
+      id: created.placeholder.txnId, memo: `groceries · AI Boost: kept as final [aib:${created.shortRef}]`, amount: -200000, categoryId: "cat-groceries",
     }]);
     const acts = (await db().select().from(auditLog).where(eq(auditLog.intentId, created.id)).all()).map((a) => a.action);
     expect(acts).toContain("intent_kept_final");
@@ -433,10 +435,26 @@ describe("extend / cancel / keep", () => {
     const created = CreateIntentsRes.parse((await create(draft())).json).intents[0]!;
     const p = fake.txns.get(created.placeholder.txnId!)!;
     p.memo = `note from me | ${p.memo}`;
+    const before = p.memo;
     await req("PATCH", `/api/intents/${created.id}`, { totalAmount: 210000 });
     const [u] = fake.callsOf("updateTransactions")[0]?.args[1] as Record<string, unknown>[];
     expect(u).toMatchObject({ amount: -209990 });
-    expect(u).not.toHaveProperty("memo");
+    // the user's text and our item text stay; only our attribution in front of the tag is replaced
+    const memo = u!.memo as string;
+    expect(memo.startsWith("note from me | ≈ ")).toBe(true);
+    expect(memo.endsWith(` · AI Boost: edited in the app (${fmtDate(TODAY)}) [aib:${created.shortRef}]`)).toBe(true);
+    expect(memo.match(/AI Boost:/g)).toHaveLength(1);
+    expect(stripAttribution(memo)).toBe(stripAttribution(before));
+  });
+
+  it("PATCH still recognizes an old-format placeholder memo (no attribution) as ours", async () => {
+    const created = CreateIntentsRes.parse((await create(draft())).json).intents[0]!;
+    const p = fake.txns.get(created.placeholder.txnId!)!;
+    p.memo = stripAttribution(p.memo);
+    expect(p.memo).toMatch(/^≈ [^·]+ \[aib:[0-9A-Z]{6}\]$/);
+    await req("PATCH", `/api/intents/${created.id}`, { memo: "bulk" });
+    const [u] = fake.callsOf("updateTransactions")[0]?.args[1] as Record<string, unknown>[];
+    expect(u?.memo).toBe(`≈ bulk · AI Boost: edited in the app (${fmtDate(TODAY)}) [aib:${created.shortRef}]`);
   });
 
   it("keep needs a created placeholder", async () => {

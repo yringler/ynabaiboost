@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "../../src/shared/schemas";
 import { auditLog, intentLines, intents, matches, reviews, sessions, users, ynabTransactions } from "../../src/worker/db/schema";
+import { mergeMemo, stripAttribution } from "../../src/worker/domain/memo";
 import { PLAN, FakeYnab, cacheTxns, db, mkTxn, seedIntent, seedUser, settingsFor, uid } from "./wp5-helpers";
 
 const m = vi.hoisted(() => ({ settings: new Map<string, Partial<Settings>>() }));
@@ -73,7 +74,7 @@ describe("createPlaceholder (§10.7, D13)", () => {
     const [call] = fake.callsOf("createTransaction");
     expect(call?.args[1]).toEqual({
       accountId: "acc-card", date: "2026-11-10", amount: -199990, payeeId: null, payeeName: "Costco",
-      categoryId: "cat-groceries", memo: `≈ groceries, socks [aib:${i.shortRef}]`, approved: true, flagColor: "purple",
+      categoryId: "cat-groceries", memo: `≈ groceries, socks · AI Boost: placeholder for ≈$200.00 note [aib:${i.shortRef}]`, approved: true, flagColor: "purple",
     });
     const row = await intentRow(i.id);
     expect(row).toMatchObject({ placeholderStatus: "created", placeholderAmount: 199990, status: "pending" });
@@ -86,7 +87,7 @@ describe("createPlaceholder (§10.7, D13)", () => {
     const i = await seed({ payee: "Shell", total: 47230, approximate: false, date: "2026-11-20", memo: "road trip" });
     await P.createPlaceholder(ctx({ flagColor: null }, "user"), i.id);
     expect(fake.callsOf("createTransaction")[0]?.args[1]).toMatchObject({
-      amount: -47230, date: TODAY, memo: `road trip [aib:${i.shortRef}]`, flagColor: null,
+      amount: -47230, date: TODAY, memo: `road trip · AI Boost: placeholder for $47.23 note [aib:${i.shortRef}]`, flagColor: null,
     });
   });
 
@@ -96,7 +97,7 @@ describe("createPlaceholder (§10.7, D13)", () => {
     ] });
     expect(await P.createPlaceholder(ctx({}, "user"), i.id)).toEqual({ ok: true, kind: "final", warning: null });
     const n = fake.callsOf("createTransaction")[0]?.args[1] as Record<string, unknown>;
-    expect(n).toMatchObject({ accountId: "acc-cash", amount: -30000, categoryId: null, approved: true, memo: `veg, flowers [aib:${i.shortRef}]` });
+    expect(n).toMatchObject({ accountId: "acc-cash", amount: -30000, categoryId: null, approved: true, memo: `veg, flowers · AI Boost: recorded note from Nov 10 [aib:${i.shortRef}]` });
     expect(n.subtransactions).toEqual([
       { amount: -20000, categoryId: "cat-groceries", memo: "veg" }, { amount: -10000, categoryId: "cat-home", memo: "flowers" },
     ]);
@@ -157,7 +158,7 @@ describe("reconcile end to end (§13)", () => {
 
     const [patch] = fake.callsOf("updateTransactions");
     expect(patch?.args[1]).toEqual([{
-      id: imp.id, memo: `card 1234 | groceries [aib:${i.shortRef}]`, flagColor: "purple", approved: true, categoryId: "cat-groceries",
+      id: imp.id, memo: `card 1234 | groceries · AI Boost: matched note from Nov 10 [aib:${i.shortRef}]`, flagColor: "purple", approved: true, categoryId: "cat-groceries",
     }]);
     // guard: a live GET of the placeholder, then the DELETE
     expect(fake.callsOf("getTransaction").map((c) => c.args[1])).toEqual([i.phId]);
@@ -360,7 +361,12 @@ describe("reconcile end to end (§13)", () => {
     await A.applyMatch(ctx({}, "user"), { intentId: i.id, txnId: c.id, lineIds: top.lineIds, allocation: top.allocation as never, score: 1, kind: "review" });
     expect(await intentRow(i.id)).toMatchObject({ status: "partial", placeholderAmount: 49990, placeholderStatus: "created" });
     const ups = fake.callsOf("updateTransactions").map((x) => (x.args[1] as Record<string, unknown>[])[0]);
-    expect(ups[1]).toEqual({ id: i.phId, amount: -49990, categoryId: "cat-lamp" });
+    expect(ups[1]).toEqual({
+      id: i.phId, amount: -49990, categoryId: "cat-lamp",
+      memo: `≈ case, book, lamp · AI Boost: placeholder for remaining ≈$50.00 [aib:${i.shortRef}]`,
+    });
+    // the charge itself names the order and the split
+    expect((ups[0] as { memo: string }).memo).toBe(`case, book · AI Boost: split across 2 categories from Amazon order of Nov 5 [aib:${i.shortRef}]`);
     expect(await auditActions(i.id)).toContain("placeholder_updated");
   });
 });
@@ -388,7 +394,7 @@ describe("applyMatch (§10.9)", () => {
     await A.applyMatch(ctx(), { intentId: i.id, txnId: t.id, lineIds: i.lineIds, score: null, kind: "manual", allocation: [
       { categoryId: "cat-home", amount: -30000, memo: "lamp" }, { categoryId: "cat-kids", amount: -20000, memo: "lego" },
     ] });
-    expect(fake.callsOf("updateTransactions")[0]?.args[1]).toEqual([{ id: t.id, memo: `lamp, lego [aib:${i.shortRef}]` }]);
+    expect(fake.callsOf("updateTransactions")[0]?.args[1]).toEqual([{ id: t.id, memo: `lamp, lego · AI Boost: linked to note from Nov 10, split it in YNAB [aib:${i.shortRef}]` }]);
     expect((await db().select().from(matches).where(eq(matches.intentId, i.id)).get())).toMatchObject({ state: "failed", error: "split_conflict" });
     expect(await openReviewsOf()).toEqual([expect.objectContaining({ kind: "split_conflict", intentId: i.id })]);
     expect((await intentRow(i.id)).status).toBe("review");
@@ -464,6 +470,18 @@ describe("safeDeletePlaceholder (§10.7)", () => {
     expect(fake.callsOf("deleteTransaction")).toHaveLength(0);
     expect(await openReviewsOf()).toHaveLength(0);
     expect(await auditActions(i.id)).toContain("placeholder_delete_refused");
+  });
+  it.each([
+    ["new format (with attribution)", (m: string) => m],
+    ["old format (no attribution)", (m: string) => stripAttribution(m)],
+    ["attribution refreshed later", (m: string) => mergeMemo(m, null, m.slice(m.indexOf("[aib:")), "placeholder for remaining $1.00")],
+  ])("deletes an untouched placeholder whose memo is in the %s", async (_n, memoOf) => {
+    const i = await withPlaceholder({ payee: "Costco", total: 10000 });
+    const p = fake.txns.get(i.phId)!;
+    expect(p.memo).toContain("AI Boost: placeholder for");
+    p.memo = memoOf(p.memo!);
+    expect(P.isUntouchedPlaceholder(p, { placeholderAmount: Math.abs(p.amount), shortRef: i.shortRef })).toBe(true);
+    expect(await P.safeDeletePlaceholder(ctx(), i.id, "cancelled")).toBe("deleted");
   });
   it("stale_delete refusal opens a ynab_matched_other review", async () => {
     const i = await withPlaceholder({ payee: "Costco", total: 10000 });

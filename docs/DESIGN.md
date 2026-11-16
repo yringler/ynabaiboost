@@ -1840,14 +1840,41 @@ allocate(chargeAbs, lines, direction, decimals): Allocation[]
   to the largest fractional parts (ties: larger weight, then categoryId)        // largest remainder
   return [{categoryId, amount: sign(direction) · floor_k·unit (+unit), memo}]   // Σ = signed charge exactly
 
-mergeMemo(existing, addition, tag):   // never exceeds 500; never drops user text
+mergeMemo(existing, addition, tag, did?):   // never exceeds 500; never drops user text
   base = existing?.trim() ?? ""
-  if base contains tag: return base
-  extra = addition ? `${addition} ${tag}` : tag
+  attr = did ? attribution(did) : null      // "AI Boost: <did>", ≤ 60 chars after the prefix, no "[", "]" or "|"
+  if base contains tag:
+    return attr ? base with our attribution directly before tag replaced by attr (or inserted) : base
+  extra = `${addition} · ${attr} ${tag}`    // parts left out when empty
   joined = base ? `${base} | ${extra}` : extra
-  if joined.length > 500: truncate `addition` (not `base`, not `tag`) with "…"
+  if joined.length > 500: truncate `addition` with "…"; still too long → drop attr; never cut `base` or `tag`
 ```
-Tag format: `[aib:XXXXXX]` where XXXXXX is `intent.short_ref`.
+Tag format: `[aib:XXXXXX]` where XXXXXX is `intent.short_ref`. The tag stays the only machine-readable part:
+recognition (`hasTag`, `tagsIn`), the §10.7 untouched-placeholder guard and the crash-replay `finalize` look at the
+tag alone.
+
+**Human-readable attribution** (owner request, review log #39). Every memo the app writes says, just before the
+tag, what AI Boost did, so someone looking in YNAB knows why the transaction changed. Texts (`did.*` in
+`domain/memo.ts`; dates as "Nov 14" via `fmtDate`, the intent's date or the plan's today in the user's timezone):
+
+| Write | Example parent memo |
+|---|---|
+| placeholder created | `≈ groceries, socks · AI Boost: placeholder for ≈$200.00 note [aib:7K2QXM]` |
+| placeholder re-amounted after a partial match | `≈ case, book, lamp · AI Boost: placeholder for remaining ≈$50.00 [aib:7K2QXM]` |
+| final entry (account without bank import) | `veg, flowers · AI Boost: recorded note from Nov 14 [aib:7K2QXM]` |
+| match, one category | `card 1234 \| groceries · AI Boost: matched note from Nov 14 [aib:7K2QXM]` |
+| match, split / Amazon | `case, book · AI Boost: split across 2 categories from Amazon order of Nov 5 [aib:7K2QXM]` |
+| match onto an existing YNAB split (split_conflict) | `lamp, lego · AI Boost: linked to note from Nov 14, split it in YNAB [aib:7K2QXM]` |
+| Keep as final | `groceries · AI Boost: kept as final [aib:7K2QXM]` |
+| placeholder updated by an edit | `≈ bulk · AI Boost: edited by voice/text (Nov 16) [aib:7K2QXM]` (form edit: `edited in the app`) |
+
+Rules: subtransaction memos keep their per-line descriptions (attribution on the parent only). Re-writing a tagged
+memo replaces only the attribution directly in front of our tag, so phrases never stack and user text (before or
+after the tag) is untouched; an old-format memo (no attribution) gets one inserted. If a replacement would exceed
+500 chars, the old attribution is removed instead. `applyMatch` does not write when the only difference is the
+attribution (YNAB merged our placeholder in place, or a retry). `updateIntent` treats the placeholder memo as
+"ours" when it equals what `createPlaceholder` wrote after `stripAttribution` on both sides, so old- and
+new-format memos are recognized; otherwise only the attribution is refreshed.
 
 ### 10.9 Executor (`engine/reconcile.ts`, `engine/apply.ts`)
 
@@ -2406,3 +2433,4 @@ Revision 2 applies an adversarial review of revision 1 and `RESEARCH.md`. Each i
 | 36 | Owner request: precision-aware Amazon auto-matching | A | Claude extracts facts (cents, items, tax, shipping, discounts, gift card, grand total, shipments, clarity note); `assessPrecision` verifies them against the user's text (§9.5); exact amounts get a 1-minor-unit tolerance (§10.2); verified Amazon orders auto-resolve multi-charge splits only when exactly one assignment explains the charges (§10.6a). New columns `intents.precision/precision_note/order_facts/order_plan`, `intent_lines.exact`. Paste up to 20 000 chars. Precision chip on confirm and pending cards. |
 | 37 | Owner decision: model `claude-sonnet-5-5` | — | D8, §9.1: explicit `effort: "low"`, adaptive thinking, `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`), no forced `tool_choice`, no sampling params. |
 | 38 | Owner request: conversational editing of pending intents | A | §9.6: multi-select + voice/text on Pending; `POST /api/intents/edit` (Claude → closed action union → refs resolved and validated, scope = selection) and `/apply` by a stored, expiring token with re-validation; setting `autoApplyEdits` (default off; still confirms on a question, a dropped action or more than one delete); execution through the route service functions (`services/intents.ts`); audit `intent_edit_conversational`; table `edit_plans` (migration 0002). |
+| 39 | Owner request: human-readable attribution in YNAB memos | A | §10.8: every memo the app writes carries "AI Boost: <what was done>" just before the unchanged `[aib:XXXXXX]` tag (placeholder, remaining, recorded, matched, split, needs split, kept as final, edited). Parent memo only; never stacks; user text untouched; truncation drops our descriptions, then the attribution, never the tag; old-format memos still recognized (`stripAttribution`). |

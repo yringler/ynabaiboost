@@ -37,6 +37,8 @@ Claude (`claude-sonnet-5-5`) using **your own Anthropic API key**. It is not aff
   - you tap **Sync now** in the header (`POST /api/sync`, for your account only);
   - you save a new note;
   - the cron runs.
+- **What changed in YNAB is labelled.** Every memo the app writes ends with a short note and a tag, e.g.
+  `groceries · AI Boost: matched note from Nov 14 [aib:7K2QXM]`; your own memo text is kept in front of it.
 - **Secrets** (YNAB tokens and the Anthropic key) are encrypted at rest in D1 with AES-256-GCM, using the
   `ENCRYPTION_KEY` Worker secret.
 - **Access:** only YNAB user ids listed in `ADMIN_USER_IDS` or `ALLOWED_USER_IDS` can use the app.

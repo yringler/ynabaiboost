@@ -3,7 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { Allocation, type FlagColor } from "../../shared/schemas";
 import { intentLines, intents, matches } from "../db/schema";
 import { fmtAmount, txnPayee } from "../domain/labels";
-import { memoTag, mergeMemo } from "../domain/memo";
+import { did, memoTag, mergeMemo, stripAttribution } from "../domain/memo";
 import { AUTO } from "../domain/score";
 import type { BatchItem } from "../env";
 import { auditStmt, toSnapshot } from "../lib/audit";
@@ -94,9 +94,14 @@ async function applyPlanned(ctx: EngineCtx, m: MatchInput, matchId: string, now:
   // ── 3. build the update ──
   const tag = memoTag(intent.shortRef);
   const summary = chosen.map((l) => l.description).join(", ");
-  const memo = mergeMemo(t.memo, summary, tag);
+  const amazon = intent.merchantKind === "amazon";
+  const categories = new Set(m.allocation.map((a) => a.categoryId)).size;
+  const what = t.isSplit ? did.needsSplit(intent.intentDate, amazon) : did.matched(intent.intentDate, amazon, m.allocation.length > 1 ? categories : 1);
+  const memo = mergeMemo(t.memo, summary, tag, what);
   const u: TxnUpdate = { id: t.id };
   if (memo !== (t.memo ?? "")) u.memo = memo;
+  // Already tagged (YNAB merged our placeholder, or a retry): refreshing only our attribution is no reason to write.
+  const attributionOnly = u.memo !== undefined && stripAttribution(u.memo) === stripAttribution(t.memo);
   if (t.flagColor === null && settings.flagColor !== null) u.flagColor = settings.flagColor satisfies FlagColor;
   // §10.9: only user-confirmed kinds or a strong score. ynab_auto has no score (YNAB matched on amount alone).
   const confident = m.kind === "manual" || m.kind === "review" || (m.score ?? 0) >= AUTO;
@@ -105,12 +110,13 @@ async function applyPlanned(ctx: EngineCtx, m: MatchInput, matchId: string, now:
 
   if (t.isSplit) {
     // YNAB cannot edit an existing split: tag it, open a split_conflict review, mark the match failed.
-    const writes = u.memo !== undefined ? await ctx.client.updateTransactions(planId, [{ id: t.id, memo }]) : [];
+    const tagWrite = u.memo !== undefined && !attributionOnly;
+    const writes = tagWrite ? await ctx.client.updateTransactions(planId, [{ id: t.id, memo }]) : [];
     const after = writes.find((x) => x.id === t.id) ?? t;
     await runBatch(db, [
       ...upsertTxnsStmts(db, userId, planId, [after], now),
       db.update(matches).set({ state: "failed", error: "split_conflict" }).where(eq(matches.id, matchId)),
-      ...(u.memo !== undefined ? [auditStmt(db, {
+      ...(tagWrite ? [auditStmt(db, {
         userId, actor: ctx.actor, action: "txn_categorized", summary: `Tagged split ${txnPayee(t)} for ${intent.payee}`,
         intentId: intent.id, ynabTxnId: t.id, before: toSnapshot(t), after: toSnapshot(after),
       }, now)] : []),
@@ -135,6 +141,8 @@ async function applyPlanned(ctx: EngineCtx, m: MatchInput, matchId: string, now:
     // §10.5 makes approved, categorized imports review-only; reaching this is a planner bug.
     throw new AppError("conflict", "Import already approved in YNAB; it needs a review");
   }
+
+  if (attributionOnly && Object.keys(u).length === 2) delete u.memo;
 
   // ── 4. YNAB first ──
   const writes = Object.keys(u).length > 1;

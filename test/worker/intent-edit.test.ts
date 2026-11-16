@@ -10,6 +10,7 @@ import { EditRes, IntentRes } from "../../src/shared/api";
 import { addDays, todayIn } from "../../src/shared/dates";
 import { putSecret } from "../../src/worker/auth/secrets";
 import { auditLog, editPlans, intentLines, intents } from "../../src/worker/db/schema";
+import { fmtDate } from "../../src/worker/domain/labels";
 import type { AppEnv } from "../../src/worker/env";
 import { ANTHROPIC_MESSAGES_URL, messageBody } from "../msw/anthropic";
 import { FakeYnab, db, mkTxn, seedIntent, seedUser, uid } from "./wp5-helpers";
@@ -163,7 +164,7 @@ describe("POST /api/intents/edit → /apply", () => {
   });
 
   it('"make it 212.47" recomputes precision deterministically: exact, 1-cent tolerance, placeholder updated', async () => {
-    fake.seed(mkTxn({ id: "ph-1", amount: -200_010, memo: "≈ groceries [aib:PHREF1]", cleared: "uncleared", importId: null }));
+    fake.seed(mkTxn({ id: "ph-1", amount: -200_010, memo: "≈ stuff [aib:PHREF1]", cleared: "uncleared", importId: null }));
     const costco = await seed({ payee: "Costco", total: 200_000, shortRef: "PHREF1", placeholderTxnId: "ph-1", placeholderStatus: "created", placeholderAmount: 200_010 });
     // as parse stores it for "costco about 200": the model reported no cents for the OLD total
     await db().update(intents).set({ rawText: "costco about 200", orderFacts: JSON.stringify({
@@ -183,6 +184,8 @@ describe("POST /api/intents/edit → /apply", () => {
     expect(i.tolerance).toBe(10);
     expect(i.lines.map((l) => l.amount)).toEqual([212_470]);
     expect(fake.txns.get("ph-1")?.amount).toBe(-212_470);           // same PATCH path: placeholder follows, no nudge
+    // old-format memo (no attribution) is still recognized as ours; the ≈ goes and the attribution names the edit
+    expect(fake.txns.get("ph-1")?.memo).toBe(`stuff · AI Boost: edited by voice/text (${fmtDate(TODAY)}) [aib:PHREF1]`);
   });
 
   it("a model saying 'exact' for a number the user never wrote stays approximate", async () => {

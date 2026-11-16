@@ -12,7 +12,7 @@ import { getSettings } from "../auth/settings";
 import { intentLines, intents } from "../db/schema";
 import { allocate } from "../domain/allocate";
 import { dateWindow } from "../domain/dates";
-import { APPROX_PREFIX, memoTag, mergeMemo, stripApprox } from "../domain/memo";
+import { APPROX_PREFIX, did, memoTag, mergeMemo, stripApprox, stripAttribution } from "../domain/memo";
 import { appendNote, factsAfterEdit, storedFacts } from "../domain/note";
 import { nudged } from "../domain/nudge";
 import { toleranceFor } from "../domain/tolerance";
@@ -282,10 +282,15 @@ export async function updateIntent(env: Env, b0: Base, id: string, patch: Intent
       const largest = [...ls].sort((x, y) => y.amount - x.amount || x.idx - y.idx)[0];
       const amt = nudged(total, approximate, ctx.currency.decimalDigits);
       const tag = memoTag(row.shortRef);
-      // Replace the memo only while it is still the one createPlaceholder wrote; text the user added is kept.
+      // Replace the memo text only while it is still the one createPlaceholder wrote (with or without its
+      // "AI Boost: …" attribution); text the user added is kept and only our attribution is refreshed.
       const ours = mergeMemo(null, `${row.approximate ? APPROX_PREFIX : ""}${row.memo ?? lines.map((l) => l.description).join(", ")}`, tag);
       const text = set.memo ?? ls.map((l) => l.description).join(", ");
-      const memo = (p.memo ?? "").trim() === ours ? mergeMemo(null, `${approximate ? APPROX_PREFIX : ""}${text}`, tag) : undefined;
+      const what = did.edited(b.today, opts.note !== undefined);
+      const next = stripAttribution(p.memo) === stripAttribution(ours)
+        ? mergeMemo(null, `${approximate ? APPROX_PREFIX : ""}${text}`, tag, what)
+        : mergeMemo(p.memo, null, tag, what);
+      const memo = next !== (p.memo ?? "") ? next : undefined;
       const res = await ctx.client.updateTransactions(b.planId, [{
         id: row.placeholderTxnId, amount: toYnabAmount(amt, row.direction), date: minDate(date, b.today),
         ...(largest ? { categoryId: largest.categoryId } : {}),
@@ -354,7 +359,7 @@ export async function keepIntent(env: Env, b0: Base, id: string): Promise<Intent
   const open = (await getLinesOf(b.db, id)).filter((l) => l.status === "open");
   const total = open.reduce((s, l) => s + l.amount, 0);
   const multi = new Set(open.map((l) => l.categoryId)).size > 1;
-  const memo = stripApprox(t.memo) ?? mergeMemo(null, row.memo, memoTag(row.shortRef));
+  const memo = mergeMemo(stripApprox(t.memo), row.memo, memoTag(row.shortRef), did.kept());
   const u: TxnUpdate = { id: row.placeholderTxnId, memo };
   if (total > 0) {
     u.amount = toYnabAmount(total, row.direction);

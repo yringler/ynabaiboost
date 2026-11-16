@@ -5,7 +5,7 @@ import { toYnabAmount } from "../../shared/money";
 import { intentLines, intents } from "../db/schema";
 import { allocate } from "../domain/allocate";
 import { fmtAmount } from "../domain/labels";
-import { APPROX_PREFIX, hasTag, memoTag, mergeMemo } from "../domain/memo";
+import { APPROX_PREFIX, did, hasTag, memoTag, mergeMemo } from "../domain/memo";
 import { nudged } from "../domain/nudge";
 import { auditStmt } from "../lib/audit";
 import { AppError } from "../lib/errors";
@@ -80,7 +80,7 @@ export async function createPlaceholder(ctx: EngineCtx, intentId: string): Promi
         : undefined;
       created = await createWithDateRetry(ctx, {
         accountId: account, date, amount: toYnabAmount(intent.totalAmount, intent.direction), ...payee,
-        categoryId: multi ? null : cat, memo: mergeMemo(null, text, tag), approved: true, flagColor: settings.flagColor,
+        categoryId: multi ? null : cat, memo: mergeMemo(null, text, tag, did.recorded(intent.intentDate)), approved: true, flagColor: settings.flagColor,
         ...(subs ? { subtransactions: subs } : {}),
       });
       final = true;
@@ -89,7 +89,8 @@ export async function createPlaceholder(ctx: EngineCtx, intentId: string): Promi
       amt = nudged(intent.totalAmount, intent.approximate, ctx.currency.decimalDigits);
       created = await createWithDateRetry(ctx, {
         accountId: account, date, amount: toYnabAmount(amt, intent.direction), ...payee, categoryId: cat,
-        memo: mergeMemo(null, `${intent.approximate ? APPROX_PREFIX : ""}${text}`, tag), approved: true, flagColor: settings.flagColor,
+        memo: mergeMemo(null, `${intent.approximate ? APPROX_PREFIX : ""}${text}`, tag, did.placeholder(intent.totalAmount, intent.approximate, ctx.currency)),
+        approved: true, flagColor: settings.flagColor,
       });
       final = false;
     }
@@ -176,10 +177,13 @@ export async function updatePlaceholderAmount(ctx: EngineCtx, intentId: string, 
   const amt = nudged(remaining, approximate, ctx.currency.decimalDigits);
   const cat = largestLine(open)?.categoryId;
   // Live guard: YNAB may have merged the placeholder with a real import since the last sync.
-  if (!(await livePlaceholder(ctx, intent, "re-amounted"))) return;
+  const live = await livePlaceholder(ctx, intent, "re-amounted");
+  if (!live) return;
   const now = Date.now();
+  const memo = mergeMemo(live.memo, null, memoTag(intent.shortRef), did.remaining(remaining, approximate, ctx.currency));
   const res = await ctx.client.updateTransactions(planId, [{
     id: intent.placeholderTxnId, amount: toYnabAmount(amt, intent.direction), ...(cat ? { categoryId: cat } : {}),
+    ...(memo !== (live.memo ?? "") ? { memo } : {}),
   }]);
   await runBatch(db, [
     ...upsertTxnsStmts(db, userId, planId, res, now),
