@@ -1,0 +1,14 @@
+{
+  "name": "4b. Amazon 3 items totalling 85, one charge 91.20 → amazon_subset apply (unique whole-order fit)",
+  "intents": [{ "id": "i1", "payee": "Amazon", "merchantKind": "amazon", "date": "2026-11-05",
+    "lines": [{ "id": "l20", "categoryId": "cat-a", "amount": 20000 },
+              { "id": "l15", "categoryId": "cat-b", "amount": 15000 },
+              { "id": "l50", "categoryId": "cat-c", "amount": 50000 }] }],
+  "txns": [
+    { "id": "c1", "date": "2026-11-08", "amount": -91200, "importPayee": "AMZN Mktp US*2K4L" }
+  ],
+  "expected": [
+    { "kind": "apply", "intentId": "i1", "txnId": "c1", "matchKind": "amazon_subset", "lineIds": ["l20", "l15", "l50"],
+      "allocation": [{ "categoryId": "cat-a", "amount": -21460 }, { "categoryId": "cat-b", "amount": -16090 }, { "categoryId": "cat-c", "amount": -53650 }] }
+  ]
+}

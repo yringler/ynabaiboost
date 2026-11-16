@@ -5,12 +5,12 @@ decision it drives. Change §10.7 / §10.11 only through a DESIGN PR that links 
 
 | # | Status | Owner | Result (one line) |
 |---|---|---|---|
-| S1 | open | WP3 | |
-| S2 | open | WP3 | |
-| S3 | open | WP3 | |
-| S4 | open | WP3 | |
+| S1 | **blocked** (no YNAB credentials in the build env) | WP3 | Code assumes §10.7 as written; group names `Internal Master Category` / `Credit Card Payments` are constants in `ynab/cache.ts`. |
+| S2 | **blocked** (no YNAB credentials) | WP3 | `updateTransactions` sends `subtransactions` in the bulk PATCH; switch to per-txn PUT inside `ynab/client.ts` if S2 fails. |
+| S3 | **blocked** (no YNAB credentials) | WP3 | Client passes YNAB 400s through as `ynab_error`; the §10.7 UTC retry lives in WP5. |
+| S4 | **blocked** (no YNAB credentials) | WP3 | Initial sync stores the minimum of the four per-resource knowledges, then uses `GET /plans/{id}` deltas. |
 | S5 | open | WP2 | |
-| S6 | open | WP4 | |
+| S6 | **blocked** (no Cloudflare credentials / phones in the build env) | WP4 | Default stays `STT_MODEL=whisper`; nova3 sends the audio as a stream. Run on real phones before enabling server STT for anyone. |
 | S7 | **done** | WP1 | `vite build` bundles `ynab@5` + `@anthropic-ai/sdk@1.9.0` cleanly (see below). |
 
 ---
@@ -21,24 +21,28 @@ decision it drives. Change §10.7 / §10.11 only through a DESIGN PR that links 
   the internal and "Credit Card Payments" category groups; `direct_import_linked` on a linked vs a cash account.
 - **Setup:**
 - **Observations:**
+- **Status (WP3 build, 2026-11-16):** not run — the build environment has no YNAB token. Run on day 1 of deployment with a PAT on a test plan.
 - **Decision (§10.7 detection branch, `safeDeletePlaceholder` guard):**
 
 ## S2: Does bulk `PATCH /transactions` with `subtransactions` convert an imported txn into a split?
 
 - **Setup:**
 - **Observations:** (PATCH result; PUT result if PATCH ignores it; confirm editing an existing split errors)
+- **Status (WP3 build, 2026-11-16):** not run — the build environment has no YNAB token. Run on day 1 of deployment with a PAT on a test plan.
 - **Decision (internals of `updateTransactions`):**
 
 ## S3: Is a placeholder dated "today" in UTC−8 at 11 pm (tomorrow in UTC) accepted?
 
 - **Setup:**
 - **Observations:**
+- **Status (WP3 build, 2026-11-16):** not run — the build environment has no YNAB token. Run on day 1 of deployment with a PAT on a test plan.
 - **Decision (§10.7 date clamp):**
 
 ## S4: Can a `server_knowledge` from per-resource endpoints be used with `GET /plans/{id}`?
 
 - **Setup:**
 - **Observations:**
+- **Status (WP3 build, 2026-11-16):** not run — the build environment has no YNAB token. Run on day 1 of deployment with a PAT on a test plan.
 - **Decision (§10.11 initial sync):**
 
 ## S5: Do refresh tokens rotate? Does an old refresh token still work?
@@ -51,7 +55,19 @@ decision it drives. Change §10.7 / §10.11 only through a DESIGN PR that links 
 
 - **Setup:** (devices, browsers, MIME types recorded)
 - **Observations:**
-- **Decision (`STT_MODEL` default, client MIME preference):**
+- **Status (WP4 build, 2026-11-16):** not run. The Workers AI binding is remote-only and the build env has no
+  Cloudflare credentials (tests stub `env.AI.run`). To run: `npx wrangler login`, `npm run dev`, enable STT for your
+  user in Admin, set Voice → Server in Settings, then record 5–20 s notes on iOS Safari (expect `audio/mp4`) and
+  Chrome Android (expect `audio/webm;codecs=opus`) with `STT_MODEL=whisper` and again with `STT_MODEL=nova3`. Record the
+  MIME type, HTTP status, transcript quality and the `/api/stt` latency for each.
+- **What the code does until then (`src/worker/ai/stt.ts`):**
+  - whisper: `audio` = raw base64 (chunked, no `data:` prefix), `vad_filter: true`, `condition_on_previous_text: false`,
+    `initial_prompt` = top 30 payees + 30 categories.
+  - nova3: `audio: { body: ReadableStream, contentType }` (the binding types `body` as `object`, and Cloudflare's examples
+    pass a stream; DESIGN §11.3 said base64, which does not type-check), `smart_format`, `numerals`.
+  - Workers AI error 3040 (capacity) is retried once; anything else → `ai_unavailable` (503).
+- **Decision (`STT_MODEL` default, client MIME preference):** pending. If whisper rejects `audio/mp4` from iOS, switch
+  `STT_MODEL` to `nova3` (D10).
 
 ## S7: Does `vite build` with `@cloudflare/vite-plugin` bundle `ynab@5` cleanly?
 

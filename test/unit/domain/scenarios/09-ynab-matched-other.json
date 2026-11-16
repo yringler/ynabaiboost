@@ -1,0 +1,8 @@
+{
+  "name": "9. YNAB auto-matched the placeholder with a same-amount charge from another payee → ynab_matched_other review",
+  "intents": [{ "id": "i1", "payee": "Costco", "date": "2026-11-10", "total": 15000, "approximate": false,
+    "placeholderTxnId": "p1", "placeholderStatus": "created" }],
+  "txns": [ { "id": "p1", "date": "2026-11-12", "amount": -15000, "payee": "Costco", "importPayee": "NETFLIX.COM 866-579", "memo": "≈ groceries [aib:I1XXXX]" } ],
+  "expected": [ { "kind": "review", "intentId": "i1", "txnId": "p1", "reviewKind": "ynab_matched_other" } ],
+  "forbidKinds": ["ynab_auto"]
+}

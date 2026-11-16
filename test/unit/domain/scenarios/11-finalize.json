@@ -1,0 +1,6 @@
+{
+  "name": "Crash replay: an import already carrying the intent's tag but no live match → finalize",
+  "intents": [{ "id": "i1", "shortRef": "K3F9QX", "payee": "Costco", "date": "2026-11-10", "total": 200000, "approximate": true }],
+  "txns": [ { "id": "t1", "date": "2026-11-11", "amount": -173500, "importPayee": "COSTCO WHSE #0123", "memo": "groceries [aib:K3F9QX]", "approved": true, "categoryId": "cat-1" } ],
+  "expected": [ { "kind": "finalize", "intentId": "i1", "txnId": "t1", "lineIds": ["i1-l1"] } ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "8. A $200 transfer import with a placeholder of 199.99 → not matched; a $200 import from another payee is never applied",
+  "intents": [{ "id": "i1", "payee": "Best Buy", "date": "2026-11-10", "total": 200000, "approximate": true,
+    "placeholderTxnId": "p1", "placeholderStatus": "created" }],
+  "txns": [
+    { "id": "p1", "date": "2026-11-10", "amount": -199990, "payee": "Best Buy", "imported": false },
+    { "id": "t1", "date": "2026-11-11", "amount": -200000, "payee": "Transfer : Savings", "importPayee": "ONLINE TRANSFER TO SAV 1234", "transferAccountId": "acc-sav" },
+    { "id": "t2", "date": "2026-11-11", "amount": -200000, "importPayee": "ZELLE TO JOHN SMITH" }
+  ],
+  "excluded": ["p1"],
+  "forbidKinds": ["apply", "ynab_auto", "finalize"],
+  "expected": "any"
+}

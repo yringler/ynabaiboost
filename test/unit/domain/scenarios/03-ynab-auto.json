@@ -1,0 +1,11 @@
+{
+  "name": "3. Exact amount, YNAB auto-matched the placeholder → ynab_auto, no split needed",
+  "intents": [{ "id": "i1", "payee": "Shell", "date": "2026-11-10", "total": 47230, "approximate": false, "categoryId": "cat-fuel",
+    "placeholderTxnId": "p1", "placeholderStatus": "created" }],
+  "txns": [
+    { "id": "p1", "date": "2026-11-10", "amount": -47230, "payee": "Shell", "importPayee": "SHELL OIL 57444", "memo": "Gas [aib:I1XXXX]" }
+  ],
+  "expected": [
+    { "kind": "ynab_auto", "intentId": "i1", "txnId": "p1", "needsSplit": false, "allocation": [{ "categoryId": "cat-fuel", "amount": -47230 }] }
+  ]
+}

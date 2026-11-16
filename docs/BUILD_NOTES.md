@@ -77,12 +77,12 @@ New test files must live in one of those directories or typecheck will not see t
   Mounting: `authRoutes` at `/auth`; `accountRoutes, syncRoutes, parseRoutes, inboxRoutes, sttRoutes, intentRoutes, reviewRoutes, activityRoutes` at `/api` (so define paths like `/me`, `/sync`, `/intents/:id` inside your router); `adminRoutes` at `/api/admin` (define `/users`, `/users/:id`, and apply `requireAdmin` yourself). `parseRoutes` is mounted before `intentRoutes`, so `/api/intents/parse` wins over `/api/intents/:id`.
 - **`hono/csrf` (4.13) also inspects `Sec-Fetch-Site`**: a cross-site non-GET request is refused by csrf (403, message `forbidden`) before originGuard runs. Both produce ApiErrorBody `forbidden` because:
 - **`errorHandler`** maps `AppError` → its code; `ZodError` → `validation` 400; **`HTTPException`** (csrf, `bodyLimit`, Hono validator content-type errors) → code by status (400 validation, 401, 403 forbidden, 404, 409, 413 payload_too_large, 415 unsupported_media, 429 rate_limited, 5xx internal); anything else → `internal` 500, logged without request data.
-- **`lib/validate.ts` (additive helper):** `validate(target, schema)` wraps `zValidator` so a failed parse throws `AppError("validation")` → ApiErrorBody. Raw `zValidator` returns its own zod-error JSON on 400, which is **not** `ApiErrorBody`; prefer `validate("json", Req)` / `validate("query", API.x.query)`. A wrong `Content-Type` on a JSON route is rejected with 400 `validation` either way.
+- **`lib/validate.ts` (additive helper):** `validate(target, schema)` wraps `zValidator` so a failed parse throws `AppError("validation")` → ApiErrorBody. Raw `zValidator` returns its own zod-error JSON on 400, which is **not** `ApiErrorBody`; prefer `validate("json", Req)` / `validate("query", API.x.query)`. For target `json`, `validate` also rejects a non-JSON `Content-Type` with 400 `validation` (Hono 4.13 would otherwise parse it as `{}`, which all-optional schemas accept; fixed at integration, see §10).
 - **`db/schema.ts`**: columns mirror §5 one to one (parity test: `test/worker/schema-parity.test.ts`). INTEGER 0/1 columns use Drizzle `{ mode: "boolean" }`, so `UserRow.sttAllowed`, `ynabTransactions.approved`, etc. are `boolean`. Enum TEXT columns carry their unions; `audit_log.action` is typed `AuditAction`. JSON columns (`user_settings.json`, `matches.line_ids/allocation`, `reviews.options`, `audit_log.before_json/after_json`) are plain `text`: parse with the shared zod schemas. Partial unique indexes are declared too.
 - **`lib/audit.ts`**: `auditStmt` throws if a `txn_categorized | txn_split | txn_approved | inbox_approved` row lacks `before`/`after`. `toSnapshot` drops unknown flag colours to `null`.
 - **`lib/ids.ts`**: `newShortRef()` is 6 chars of Crockford base32 (`0-9A-Z` minus `ILOU`).
 
-## 7. Stubs
+## 7. Stubs (historical — all filled by WP2–WP6; `grep -rn "not implemented" src` is empty)
 
 - Every §8 function throws `new Error("not implemented: <functionName>")`; every route module exports an **empty** `new Hono<AppEnv>()`; middleware stubs throw. Signatures are exactly §8.
 - `ynab/types.ts`, `domain/types.ts` (§10.1) and `ai/schemas.ts` (§9.2) are complete, not stubs.
@@ -107,3 +107,82 @@ New test files must live in one of those directories or typecheck will not see t
 ## 9. Spike S7
 
 Done; see `docs/SPIKES.md`. `vite build` bundles `ynab@5` and `@anthropic-ai/sdk@1.9.0` (≈ 396 kB gzip together with Hono/zod). Always pass `fetchApi` to the ynab `Configuration`.
+
+## 10. Integration notes (after WP2–WP6)
+
+Resolutions of every contract issue the packages reported. No frozen §6–§8 signature changed; DESIGN.md §4, §7,
+§8.2–§8.4 comments and review-log row 34 were updated to match.
+
+### Worker
+- **Content-Type on JSON routes.** `validate("json", …)` now enforces `application/json` (or `+json`) for every route.
+  `middleware/requireJson.ts` (WP2) shares the same check and stays on WP2's routes; stacking both is harmless.
+- **`DELETE /api/account`** is session-only (§7). `requireAllowedUser` lets exactly that method+path through, so a
+  user removed from `ALLOWED_USER_IDS` can still delete their data. `index.ts` is unchanged.
+- **`not_allowed` message** always contains `user id: <id>` (both the middleware and `POST /auth/pat`), which is
+  what the SPA's `extractUserId` regex reads. OAuth refusals redirect to `/login?error=not_allowed&uid=<id>`.
+- **OAuth callback error codes:** `oauth_state`, `oauth_denied`, `oauth_failed`, `oauth_unavailable`,
+  `not_allowed`. The login page has text for each.
+- **Secrets in one batch:** async helpers can't return Drizzle statements, so WP2 exposes `sealSecret()` +
+  synchronous `putSealedStmt()` / `deleteSecretsStmt()` for `db.batch`. `putSecret`/`getSecret`/`deleteSecrets` unchanged.
+- **`getYnabAccessToken` failures:** only `invalid_grant`/401 from the token endpoint set `needs_reauth`; 5xx and
+  network errors throw `ynab_error`. A caller that loses the refresh lock polls 10 × 500 ms, then `ynab_error`.
+- **PAT login and YNAB 401:** returns 400 `validation` ("YNAB did not accept this token"), not `ynab_reauth_required`.
+- **Anthropic key check** uses `messages.countTokens`; SDK 1.9.0 sends `Authorization: Bearer`, not `x-api-key`.
+- **`Me.plan`:** when `settings.planId` is set but no `sync_state` row exists yet, `plan` is `{ id, name: "", currency: USD/2 }`.
+  The SPA decides onboarding from `settings.planId`, never from `plan === null`.
+- **`toAppError`** is a pure mapping. `createYnabClient` applies the side effects (401 → `markNeedsReauth`; final 429 →
+  `rate_limited_until` on every plan of the user) through an `onYnabError` hook. The original `YnabApiError` is the
+  AppError's `cause`; WP5's future-date retry reads `cause.status === 400` and `cause.detail`. `asYnabApiError`
+  unwraps the SDK's `FetchError`, because the SDK throws the JSON body and loses the HTTP status.
+- **`sync_state.plan_name`** is written by `GET /api/plans` (the onboarding picker), because the 5-call initial sync
+  has no plan name.
+- **Cron trigger before the first sync** → `SyncResult.skipped = "no_plan"`. Cron never runs the initial sync.
+- **Category sort index:** `groupIndex*1000 + categoryIndex`; delta-new categories get `1_000_000 + index`.
+- **Split flag:** `isSplit = delta flag OR cached flag`; un-splitting in YNAB is only noticed on a full re-sync.
+- **Cache pruning:** WP3 `syncPlan` prunes cached txns > 180 days; WP5 cron prunes > 120 days except those
+  referenced by open intents. Both are harmless together.
+- **`callStructured`** uses `client.beta.messages.create` with `output_config.format` (`betaZodOutputFormat`) and
+  validates locally, so a `refusal` / `max_tokens` stop is checked before parsing. It sends the
+  `server-side-fallback-2026-07-01` beta with `fallbacks: "default"`.
+- **`suggestInboxCategories`** returns 0 silently without consent/key and throws other AI errors; `runUserCycle`
+  catches them into `SyncResult.errors` and still counts the cycle as successful.
+- **Inbox:** split parents and transfers are never in the inbox; approve rejects them into `failed`. Approve sets
+  `settings.flagColor` only when the txn has no flag. Dismiss stamps `inbox_suggestions.created_at`; the txn comes
+  back once `ynab_transactions.updated_at` is newer.
+- **STT nova-3** receives a `ReadableStream`, not base64 (the binding types `body` as `object`). Confirm in S6.
+- **WP5 engine choices** (all §10-internal): in-place-merged YNAB auto-matches judge the payee by import names only;
+  a failed placeholder delete leaves the intent open and is finished on the next `reconcileUser`; finalize reuses
+  the failed match row's lines; `ynab_auto` sets `placeholder_status = "auto_matched"`; dismissed reviews with the
+  same key/kind/options are not reopened; `expires_on = date + max(staleAfterDays, merchant window after-days)`;
+  Amazon "fits another intent" is limited to open Amazon intents of the same direction;
+  `countOpen` = pending (pending|partial, not stale), stale (open and `expires_on < today`), review (open reviews).
+- **Additive exports** outside §8 exist in WP3 (`backoffFetch`, `createYnabClientWith`, converters, cache helpers,
+  constants), WP5 (`domain/labels.ts`, `domain/nudge.ts`, `engine/reviews.ts`, `engine/store.ts`) and WP2
+  (`auth/me.ts`, seal/batch helpers). Other packages import only §8 exports from each other.
+
+### Client
+- `createAppRouter(queryClient, history?)` replaces WP1's `router` export; `main.tsx` builds both.
+- Guards: logged-out `/` → `/welcome`; other 401 → `/login?redirect=<relative path>`; 403 `not_allowed` →
+  `/login?error=not_allowed&uid=…`; missing plan/key/consent → `/onboarding`; `/admin` admins only.
+- **Sync** is only the header's "Sync now" button (POST `/api/sync`) plus intent creation. No sync on mount, focus,
+  timer or pull-to-refresh (owner decision); a router test asserts it.
+- Pending tab badge = `counts.review + counts.stale`.
+- shadcn components were written from the new-york-v4 registry with relative imports (no `@/` alias configured).
+- The landing page uses plain `<a>` links (full navigations), extra tokens (`--accent-ink`, `--ok-fg`, `--dot`,
+  `--shadow-sm`) and a two-column feature layout at ≥ 720 px (a deliberate deviation from LANDING §5).
+- `public/mockServiceWorker.js` ships but is registered only when `DEV && VITE_MOCK_API`.
+
+### Testing patterns (add to §5)
+- The Workers pool loads `src/worker/index.ts` (and its import graph) **before** a test file's `vi.mock` applies.
+  Route tests that mock other modules call `vi.resetModules()` and re-import the app (`loadFreshApp()` in
+  `test/worker/wp2-helpers.ts`). Import `instanceof` classes (e.g. `YnabApiError`) and `hono` itself dynamically
+  after that; Hono recognises a sub-app's default error handler by identity.
+- In workerd a `vi.fn` that returns a rejected promise is reported as a failure even when handled; use a plain function.
+- Fakes: `test/msw/ynab.ts` (`FakeYnab`, an in-memory api.ynab.com with server knowledge, request log and
+  `failNext`), `test/msw/anthropic.ts` (`FakeAnthropic`). `test/fixtures/ynab/plan.ts` is the edge-case plan.
+- `npm run eval:parse` runs the live parse eval (needs `ANTHROPIC_API_KEY`); it is skipped in `npm test`.
+
+### Open items
+- Spikes S1–S6 need real YNAB/Cloudflare credentials and phones (see `docs/SPIKES.md`).
+- Swipe-to-dismiss on inbox rows and E2E checks on real phones are not done.
+- The client entry chunk is ~110 KB gzip; LANDING's "≤ 8 KB over shell" budget would need zod split off the landing path.

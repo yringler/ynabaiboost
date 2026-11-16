@@ -1,0 +1,19 @@
+{
+  "name": "4. Amazon 20/15/50 with charges 37.10 and 53.00 → amazon_split review, no auto-apply",
+  "intents": [{ "id": "i1", "payee": "Amazon", "merchantKind": "amazon", "date": "2026-11-05",
+    "lines": [{ "id": "l20", "categoryId": "cat-a", "amount": 20000, "description": "phone case" },
+              { "id": "l15", "categoryId": "cat-b", "amount": 15000, "description": "book" },
+              { "id": "l50", "categoryId": "cat-c", "amount": 50000, "description": "lamp" }] }],
+  "txns": [
+    { "id": "c1", "date": "2026-11-07", "amount": -37100, "importPayee": "AMZN Mktp US*2K4L" },
+    { "id": "c2", "date": "2026-11-09", "amount": -53000, "importPayee": "Amazon.com*RT55" }
+  ],
+  "expected": [
+    { "kind": "review", "intentId": "i1", "reviewKind": "amazon_split" }
+  ],
+  "forbidKinds": ["apply"],
+  "expectOptions": [
+    { "transactionId": "c1", "lineIds": ["l20", "l15"] },
+    { "transactionId": "c2", "lineIds": ["l50"] }
+  ]
+}

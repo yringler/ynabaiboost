@@ -1,4 +1,877 @@
-/* landing.css — WP6 (LANDING §3.2, §4): tokens, keyframes, reduced-motion rules. Placeholder created by WP1. */
+/* landing.css — LANDING §3.2, §4, §5, §7: tokens, layout, keyframes and reduced-motion rules, scoped to .landing.
+   Motion rule: the base style of every animated element is its final (rested) state. Keyframes describe only
+   how it got there (usually just `from`), run once with fill-mode `both`, and take their delay from --d (ms).
+   Only opacity and transform animate (plus one border/background tint on the matched row). */
+
+/* ── Tokens (§4) ─────────────────────────────────────────────────────────── */
 .landing {
   color-scheme: light dark;
+  --bg: #fbfaf7;
+  --bg-elev: #ffffff;
+  --bg-sunken: #f3f1ec;
+  --fg: #1c1b19;
+  --muted: #6b6862;
+  --border: #e5e2db;
+  --accent: #c2410c;
+  --accent-fg: #ffffff;
+  --accent-soft: #fdeee6;
+  --accent-ink: #9a3412; /* text on --accent-soft */
+  --ok: #15803d;
+  --ok-fg: #ffffff;
+  --ok-soft: #e7f5ec;
+  --pending: #8a6a12;
+  --dot: #e3dfd6;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 12px 32px rgb(0 0 0 / 0.08);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05), 0 4px 12px rgb(0 0 0 / 0.05);
+  --radius: 14px;
+  --pill: 999px;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --gutter-l: max(16px, env(safe-area-inset-left));
+  --gutter-r: max(16px, env(safe-area-inset-right));
+
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.6;
+  min-height: 100dvh;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+}
+@media (prefers-color-scheme: dark) {
+  .landing {
+    --bg: #151514;
+    --bg-elev: #1e1e1c;
+    --bg-sunken: #111110;
+    --fg: #ecebe6;
+    --muted: #a09d95;
+    --border: #2f2e2b;
+    --accent: #fb8a4c;
+    --accent-fg: #1a0c04;
+    --accent-soft: #3a2116;
+    --accent-ink: #fdc9a8;
+    --ok: #4ade80;
+    --ok-fg: #052e16;
+    --ok-soft: #12301f;
+    --pending: #e3b94f;
+    --dot: #23221f;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.45);
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 12px rgb(0 0 0 / 0.3);
+  }
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+.landing *,
+.landing *::before,
+.landing *::after {
+  box-sizing: border-box;
+}
+.landing a {
+  color: inherit;
+}
+.landing :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+.landing svg {
+  flex: none;
+}
+.landing q {
+  quotes: "\201C" "\201D";
+}
+.landing .amt {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.landing .l-wrap {
+  width: 100%;
+  max-width: calc(60rem + var(--gutter-l) + var(--gutter-r));
+  margin-inline: auto;
+  padding-left: var(--gutter-l);
+  padding-right: var(--gutter-r);
+}
+.landing h1,
+.landing h2,
+.landing h3 {
+  margin: 0;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.landing h2 {
+  font-size: clamp(1.4rem, 4.5vw, 1.8rem);
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+.landing p {
+  margin: 0;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.landing .l-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 64px;
+  padding-top: env(safe-area-inset-top);
+}
+.landing .wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+.landing .wordmark-glyph {
+  display: grid;
+  place-items: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 1rem;
+}
+.landing .l-link-muted {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 500;
+}
+.landing .l-link-muted:hover {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.landing .l-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 48px;
+  padding: 0 22px;
+  border-radius: var(--pill);
+  border: 1px solid transparent;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    transform 0.15s var(--ease-out),
+    box-shadow 0.15s var(--ease-out),
+    background-color 0.15s;
+}
+.landing .l-btn:active {
+  transform: translateY(1px);
+}
+.landing .l-btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.1), 0 6px 16px color-mix(in oklab, var(--accent) 28%, transparent);
+}
+.landing .l-btn-primary:hover {
+  background: color-mix(in oklab, var(--accent) 90%, var(--fg));
+}
+.landing .l-btn-ghost {
+  background: var(--bg-elev);
+  border-color: var(--border);
+  color: var(--fg);
+}
+.landing .l-btn-ghost:hover {
+  background: var(--bg-sunken);
+}
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
+.landing .hero {
+  display: grid;
+  gap: 2.25rem;
+  padding-top: 1.5rem;
+  padding-bottom: 3rem;
+}
+.landing .hero h1 {
+  font-size: clamp(2.1rem, 8vw, 3.2rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+.landing .lede {
+  margin-top: 0.75rem;
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+.landing .ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+.landing .note {
+  margin-top: 0.9rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+@media (max-width: 399.98px) {
+  .landing .ctas {
+    flex-direction: column;
+  }
+  .landing .ctas .l-btn {
+    width: 100%;
+  }
+}
+
+/* ── Sections ────────────────────────────────────────────────────────────── */
+.landing .l-section {
+  padding-block: 48px;
+  border-top: 1px solid var(--border);
+}
+.landing .l-section > .l-wrap > p,
+.landing .feature-copy p {
+  margin-top: 0.5rem;
+  max-width: 34rem;
+  color: var(--muted);
+}
+.landing .l-section:not(.closing) > .l-wrap > p a {
+  color: var(--accent);
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+.landing .feature {
+  display: grid;
+  gap: 1.5rem;
+}
+.landing .feature-demo {
+  width: 100%;
+  max-width: 30rem;
+}
+
+/* Steps */
+.landing .steps {
+  display: grid;
+  gap: 0.85rem;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.landing .step {
+  padding: 1.15rem 1.25rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+}
+.landing .step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+.landing .step-icon {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+.landing .step-num {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.landing .step h3 {
+  font-size: 1.1rem;
+  line-height: 1.3;
+}
+.landing .step p {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.97rem;
+}
+
+/* Closing CTA */
+.landing .closing {
+  text-align: center;
+  padding-block: 56px 64px;
+}
+.landing .closing .l-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+.landing .closing p {
+  margin: -0.25rem 0 0;
+  font-size: 0.9rem;
+}
+
+/* Footer */
+.landing .l-footer {
+  border-top: 1px solid var(--border);
+  padding-block: 1.5rem calc(2rem + env(safe-area-inset-bottom));
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.landing .l-footer .l-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+}
+.landing .l-footer a {
+  text-underline-offset: 3px;
+}
+
+@media (min-width: 720px) {
+  .landing .hero {
+    grid-template-columns: 1.05fr 1fr;
+    align-items: center;
+    gap: 3rem;
+    padding-top: 4rem;
+    padding-bottom: 5rem;
+  }
+  .landing .l-section {
+    padding-block: 64px;
+  }
+  .landing .steps {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+  .landing .closing {
+    padding-block: 72px 80px;
+  }
+  /* Feature sections put the picture beside the copy so wide screens are not half empty. */
+  .landing .feature {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: 3rem;
+  }
+  .landing .feature-demo {
+    max-width: none;
+  }
+}
+
+/* ── Shared demo pieces ──────────────────────────────────────────────────── */
+.landing .story-panel,
+.landing .split-panel {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background-color: var(--bg-sunken);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.2px);
+  background-size: 18px 18px;
+  background-position: 9px 9px;
+}
+.landing .line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.landing .line-start {
+  justify-content: flex-start;
+  align-items: center;
+}
+.landing .payee {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.landing .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.12rem 0.6rem;
+  border-radius: var(--pill);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.landing .chip-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.landing .chip-accent {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.landing .slot {
+  display: grid;
+  justify-items: start;
+  align-items: center;
+}
+.landing .slot > * {
+  grid-area: 1 / 1;
+}
+.landing .cat-old {
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--muted);
+  opacity: 0; /* ends hidden */
+  animation: l-out 250ms ease-out calc(var(--d, 0) * 1ms) both;
+}
+.landing .cat-new {
+  animation: l-rise 250ms var(--ease-out) calc(var(--d, 0) * 1ms) both;
+}
+.landing .check {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--ok);
+  color: var(--ok-fg);
+  font-size: 1rem;
+  animation: l-pop 300ms var(--ease-spring) calc(var(--d, 0) * 1ms) both;
+}
+
+/* ── Story (hero, §3.1) ──────────────────────────────────────────────────── */
+.landing .story {
+  margin: 0;
+  min-width: 0;
+}
+.landing .story-panel {
+  padding: 0.5rem;
+  box-shadow: var(--shadow);
+}
+.landing .stage {
+  --stage-h: 18rem;
+  --pad: 1rem;
+  --row-h: 4.25rem;
+  --bubble-top: 4.6rem;
+  --drop: calc(var(--stage-h) - var(--pad) - var(--row-h) - var(--bubble-top));
+  position: relative;
+  height: var(--stage-h);
+  overflow: hidden;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+.landing .stage > div {
+  position: absolute;
+  inset: 0;
+}
+
+.landing .mic {
+  position: absolute;
+  top: var(--pad);
+  left: var(--pad);
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 1.3rem;
+  box-shadow: 0 4px 14px color-mix(in oklab, var(--accent) 35%, transparent);
+  animation: l-pop 300ms var(--ease-spring) calc(var(--d, 0) * 1ms) both;
+}
+.landing .mic::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  opacity: 0; /* ends hidden */
+  animation: l-ring 500ms ease-out 300ms 2 both;
+}
+.landing .wave {
+  position: absolute;
+  top: calc(var(--pad) + 0.75rem);
+  left: calc(var(--pad) + 3.6rem);
+  display: flex;
+  align-items: center;
+  gap: 0.22rem;
+  height: 1.25rem;
+}
+.landing .wave i {
+  display: block;
+  width: 0.26rem;
+  height: 0.7rem;
+  border-radius: 99px;
+  background: var(--accent);
+  animation: l-bar 240ms ease-in-out calc(var(--d, 0) * 1ms) 3 alternate both;
+}
+.landing .wave i:nth-child(2) {
+  height: 1.15rem;
+}
+.landing .wave i:nth-child(3) {
+  height: 0.85rem;
+}
+
+.landing .bubble-in {
+  position: absolute;
+  top: var(--bubble-top);
+  left: var(--pad);
+  right: var(--pad);
+  animation: l-rise 300ms var(--ease-out) calc(var(--d, 0) * 1ms) both;
+}
+.landing .bubble {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.65rem 0.95rem;
+  border-radius: 0.35rem 1.1rem 1.1rem 1.1rem;
+  background: var(--accent-soft);
+  color: var(--fg);
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+  transform-origin: 0 0;
+  /* Fades and shrinks as the card takes its place (1.8 s), comes back once the match lands (≈4.1–4.4 s). */
+  animation: l-away 2600ms var(--ease-out) 1800ms both;
+}
+
+.landing .later {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc((var(--bubble-top) + var(--row-h) + var(--stage-h) - var(--pad) - var(--row-h)) / 2 - 0.85rem);
+  text-align: center;
+  opacity: 0; /* ends hidden */
+  animation: l-blink 900ms ease calc(2600ms) both;
+}
+.landing .later span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: var(--pill);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.landing .row,
+.landing .card-drop {
+  position: absolute;
+  left: var(--pad);
+  right: var(--pad);
+  bottom: var(--pad);
+  height: var(--row-h);
+}
+.landing .row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.6rem 0.75rem 0.6rem 0.9rem;
+  border-radius: 12px;
+  border: 1.5px solid color-mix(in oklab, var(--ok) 55%, var(--border));
+  background: color-mix(in oklab, var(--ok-soft) 55%, var(--bg-elev));
+  box-shadow: var(--shadow-sm);
+  animation:
+    l-slide 350ms var(--ease-out) 2800ms both,
+    l-tint 300ms ease 4100ms both;
+}
+.landing .row-main {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.landing .story .check {
+  --d: 4100;
+}
+.landing .story .cat-old,
+.landing .story .cat-new {
+  --d: 3900;
+}
+
+.landing .card-drop {
+  z-index: 2;
+  animation: l-snap 450ms var(--ease-spring) 3400ms both;
+}
+.landing .card-fade {
+  height: 100%;
+  opacity: 0; /* ends hidden: dissolves into the row */
+  animation: l-out 250ms ease-out 3900ms both;
+}
+.landing .card {
+  position: relative;
+  display: grid;
+  align-content: center;
+  gap: 0.3rem;
+  height: 100%;
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+  border: 1.5px dashed var(--pending);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+  transform-origin: 0 0;
+  animation: l-morph 350ms var(--ease-out) 1800ms both;
+}
+.landing .card::after {
+  /* the border turns solid as it lands */
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  border: 1.5px solid var(--ok);
+  animation: l-in 200ms ease 3550ms both;
+}
+.landing .waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--pending);
+  white-space: nowrap;
+}
+
+.landing .replay {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0 auto;
+  padding: 0.35rem 0.5rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 8px;
+  min-height: 32px;
+}
+.landing .story {
+  display: flex;
+  flex-direction: column;
+}
+.landing .replay:hover {
+  color: var(--fg);
+}
+
+@media (min-width: 720px) {
+  .landing .stage {
+    --stage-h: 21rem;
+    --pad: 1.25rem;
+    --bubble-top: 5.25rem;
+  }
+}
+
+/* Paused until the figure is in view (useInView adds .is-on). */
+.landing .story:not(.is-on) *,
+.landing .story:not(.is-on) *::after,
+.landing .split:not(.is-on) * {
+  animation-play-state: paused !important;
+}
+
+/* ── Split (Amazon, §3.4) ────────────────────────────────────────────────── */
+.landing .split {
+  margin: 0;
+}
+.landing .split-panel {
+  padding: 0.85rem;
+}
+.landing .split-order {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  border: 1.5px dashed var(--pending);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+  animation: l-rise 300ms var(--ease-out) calc(var(--d, 0) * 1ms) both;
+}
+.landing .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.landing .split-rows {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.landing .split-row,
+.landing .peek-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem 0.55rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+}
+.landing .split-row {
+  animation: l-slide 350ms var(--ease-out) calc(var(--d, 0) * 1ms) both;
+}
+.landing .split-row .slot {
+  justify-items: end;
+}
+.landing .split-txn {
+  display: grid;
+  min-width: 0;
+  line-height: 1.3;
+}
+.landing .split-txn .amt {
+  font-size: 0.95rem;
+}
+.landing .split .check {
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 0.85rem;
+}
+
+/* ── Inbox peek ──────────────────────────────────────────────────────────── */
+.landing .peek {
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg-sunken);
+}
+.landing .chip-ai svg {
+  font-size: 0.9rem;
+}
+.landing .peek-ok {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 1.1rem;
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
+/* ── Keyframes (prefixed: the app also loads tw-animate-css) ─────────────── */
+@keyframes l-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes l-ring {
+  from {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+@keyframes l-bar {
+  from {
+    transform: scaleY(0.3);
+  }
+}
+@keyframes l-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes l-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes l-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+@keyframes l-morph {
+  from {
+    opacity: 0;
+    transform: scale(0.82) translateY(-4px);
+  }
+}
+@keyframes l-away {
+  0% {
+    opacity: 1;
+    transform: none;
+  }
+  8% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  88% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes l-blink {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  25%,
+  70% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+@keyframes l-slide {
+  from {
+    opacity: 0;
+    transform: translateX(2.5rem);
+  }
+}
+@keyframes l-snap {
+  from {
+    transform: translateY(calc(-1 * var(--drop)));
+  }
+}
+@keyframes l-tint {
+  from {
+    border-color: var(--border);
+    background-color: var(--bg-elev);
+  }
+}
+
+/* ── Reduced motion (§3.3): a still "before → after" picture ─────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .landing .story *,
+  .landing .story *::after,
+  .landing .split *,
+  .landing .l-btn {
+    animation: none !important;
+    transition: none !important;
+  }
+  .landing .story .card-drop,
+  .landing .story .later,
+  .landing .story .cat-old,
+  .landing .split .cat-old,
+  .landing .replay {
+    display: none;
+  }
 }

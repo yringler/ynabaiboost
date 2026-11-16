@@ -1,0 +1,21 @@
+{
+  "name": "4c. As 4b plus 8 unrelated Amazon charges closer in date → pre-filter drops them before the cap; still applies",
+  "intents": [{ "id": "i1", "payee": "Amazon", "merchantKind": "amazon", "date": "2026-11-05",
+    "lines": [{ "id": "l20", "categoryId": "cat-a", "amount": 20000 },
+              { "id": "l15", "categoryId": "cat-b", "amount": 15000 },
+              { "id": "l50", "categoryId": "cat-c", "amount": 50000 }] }],
+  "txns": [
+    { "id": "u1", "date": "2026-11-05", "amount": -8990, "importPayee": "Prime Video*AB12" },
+    { "id": "u2", "date": "2026-11-05", "amount": -5990, "importPayee": "AMZN Digital*CD34" },
+    { "id": "u3", "date": "2026-11-06", "amount": -4990, "importPayee": "AMZN Mktp US*EF56" },
+    { "id": "u4", "date": "2026-11-06", "amount": -2990, "importPayee": "Amazon Prime*GH78" },
+    { "id": "u5", "date": "2026-11-06", "amount": -139000, "importPayee": "Amazon Prime*IJ90" },
+    { "id": "u6", "date": "2026-11-07", "amount": -249990, "importPayee": "AMZN Mktp US*KL12" },
+    { "id": "u7", "date": "2026-11-07", "amount": -119000, "importPayee": "AMZN Mktp US*MN34" },
+    { "id": "u8", "date": "2026-11-07", "amount": -9990, "importPayee": "Amazon Digital*OP56" },
+    { "id": "c1", "date": "2026-11-12", "amount": -91200, "importPayee": "AMZN Mktp US*2K4L" }
+  ],
+  "expected": [
+    { "kind": "apply", "intentId": "i1", "txnId": "c1", "matchKind": "amazon_subset" }
+  ]
+}

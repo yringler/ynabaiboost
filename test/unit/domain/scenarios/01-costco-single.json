@@ -1,0 +1,12 @@
+{
+  "name": "1. Costco said ~$200, actual 173.50 the next day → apply single",
+  "intents": [{ "id": "i1", "payee": "Costco", "date": "2026-11-10", "total": 200000, "approximate": true, "categoryId": "cat-groceries" }],
+  "txns": [
+    { "id": "t1", "date": "2026-11-11", "amount": -173500, "payee": "Costco", "importPayee": "COSTCO WHSE #0123" },
+    { "id": "t-other", "date": "2026-11-11", "amount": -12000, "payee": "Shell", "importPayee": "SHELL OIL 5774" }
+  ],
+  "expected": [
+    { "kind": "apply", "intentId": "i1", "txnId": "t1", "matchKind": "single", "lineIds": ["i1-l1"],
+      "allocation": [{ "categoryId": "cat-groceries", "amount": -173500 }] }
+  ]
+}

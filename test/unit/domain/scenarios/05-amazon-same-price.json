@@ -1,0 +1,13 @@
+{
+  "name": "5. Amazon with two items at the same price in different categories and one charge fitting either → review",
+  "intents": [{ "id": "i1", "payee": "Amazon", "merchantKind": "amazon", "date": "2026-11-05",
+    "lines": [{ "id": "lbook", "categoryId": "cat-books", "amount": 20000, "description": "book" },
+              { "id": "ltoy", "categoryId": "cat-toys", "amount": 20000, "description": "toy" }] }],
+  "txns": [ { "id": "c1", "date": "2026-11-07", "amount": -21400, "importPayee": "AMZN Mktp US*2K4L" } ],
+  "expected": [ { "kind": "review", "intentId": "i1", "reviewKind": "amazon_split" } ],
+  "forbidKinds": ["apply"],
+  "expectOptions": [
+    { "transactionId": "c1", "lineIds": ["lbook"] },
+    { "transactionId": "c1", "lineIds": ["ltoy"] }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "3b. YNAB match surfaces as a partner txn pointing at the placeholder; split needed for two categories",
+  "intents": [{ "id": "i1", "payee": "Target", "date": "2026-11-10", "approximate": false,
+    "placeholderTxnId": "p1", "placeholderStatus": "created",
+    "lines": [{ "id": "l1", "categoryId": "cat-home", "amount": 30000 }, { "id": "l2", "categoryId": "cat-food", "amount": 20000 }] }],
+  "txns": [
+    { "id": "p1", "date": "2026-11-10", "amount": -50000, "payee": "Target", "imported": false },
+    { "id": "t9", "date": "2026-11-11", "amount": -50000, "importPayee": "TARGET T-1234", "matchedTransactionId": "p1" }
+  ],
+  "expected": [
+    { "kind": "ynab_auto", "intentId": "i1", "txnId": "t9", "needsSplit": true,
+      "allocation": [{ "categoryId": "cat-home", "amount": -30000 }, { "categoryId": "cat-food", "amount": -20000 }] }
+  ]
+}

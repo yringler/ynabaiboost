@@ -1,0 +1,9 @@
+{
+  "name": "7. Placeholder deleted by the user → placeholder_missing",
+  "intents": [
+    { "id": "i1", "payee": "Bakery", "date": "2026-11-10", "total": 12000, "approximate": true, "placeholderTxnId": "p1", "placeholderStatus": "created" },
+    { "id": "i2", "payee": "Florist", "date": "2026-11-10", "total": 30000, "approximate": true, "placeholderTxnId": "p-gone", "placeholderStatus": "created" }
+  ],
+  "txns": [ { "id": "p1", "date": "2026-11-10", "amount": -11990, "payee": "Bakery", "imported": false, "deleted": true } ],
+  "expected": [ { "kind": "placeholder_missing", "intentId": "i1" }, { "kind": "placeholder_missing", "intentId": "i2" } ]
+}

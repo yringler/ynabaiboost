@@ -251,7 +251,7 @@ app.use("*", csrf({ origin: (origin, c) => origin === c.env.APP_ORIGIN }));
 app.use("*", originGuard);                            // D20, non-GET only
 app.route("/auth", authRoutes);                       // public (callback/login/logout)
 app.use("/api/*", requireSession);
-app.use("/api/*", requireAllowedUser);                // id in ADMIN_USER_IDS ∪ ALLOWED_USER_IDS, else 403 forbidden
+app.use("/api/*", requireAllowedUser);                // id in ADMIN_USER_IDS ∪ ALLOWED_USER_IDS, else 403 not_allowed (DELETE /api/account exempt, §7)
 for (const r of [accountRoutes, syncRoutes, parseRoutes, inboxRoutes, sttRoutes,
                  intentRoutes, reviewRoutes, activityRoutes]) app.route("/api", r);
 app.route("/api/admin", adminRoutes);                  // adminRoutes applies requireAdmin itself
@@ -939,7 +939,7 @@ Used by WP3 (`lastAccountForPayee`), WP4 (payee id resolution, §9.4) and WP5 (s
 
 ## 7. HTTP routes
 
-Every handler validates its body with `zValidator("json", <Req>)` (and `zValidator("query", …)` where the route table has a `query` schema) and responds `c.json(<Res>.parse(value))`. Parsing the response with the zod schema in dev is cheap and catches contract drift. Errors are `ApiErrorBody`. "Session" means a valid `__Host-sid`. "Active" means the user id is in `ADMIN_USER_IDS ∪ ALLOWED_USER_IDS` (D16; `requireAllowedUser`).
+Every handler validates its body with `validate("json", <Req>)` (lib/validate.ts: zValidator + ApiErrorBody + a hard 400 for a non-JSON Content-Type) (and `zValidator("query", …)` where the route table has a `query` schema) and responds `c.json(<Res>.parse(value))`. Parsing the response with the zod schema in dev is cheap and catches contract drift. Errors are `ApiErrorBody`. "Session" means a valid `__Host-sid`. "Active" means the user id is in `ADMIN_USER_IDS ∪ ALLOWED_USER_IDS` (D16; `requireAllowedUser`).
 
 | Method | Path | Req → Res | Auth | Owner | Notes |
 |---|---|---|---|---|---|
@@ -1067,7 +1067,7 @@ export function destroySession(c: Context<AppEnv>): Promise<void>;
 
 // middleware/session.ts
 export const requireSession: MiddlewareHandler<AppEnv>;          // sets userId, user, sessionIdHash; rolling refresh
-export const requireAllowedUser: MiddlewareHandler<AppEnv>;      // isAllowed, else 403 not_allowed
+export const requireAllowedUser: MiddlewareHandler<AppEnv>;      // isAllowed, else 403 not_allowed ("… user id <id> …" in message); lets DELETE /api/account through (session only, §7)
 export const requireAdmin: MiddlewareHandler<AppEnv>;
 
 // routes
@@ -1144,8 +1144,10 @@ export function createYnabClientForToken(token: string): YnabClient;
 // ynab/errors.ts
 export class YnabApiError extends Error { status: number; id: string; name: string; detail: string }
 export function isYnabErrorBody(x: unknown): x is { error: { id: string; name: string; detail: string } };
-/** 401 → ynab_reauth_required (+markNeedsReauth); 403.1/403.2 → ynab_subscription_lapsed;
- *  429 → ynab_rate_limited (+sync_state.rate_limited_until = now + 15 min); else ynab_error. */
+/** Pure mapping: 401 → ynab_reauth_required; 403.1/403.2 → ynab_subscription_lapsed;
+ *  429 → ynab_rate_limited; else ynab_error (the YnabApiError is kept as `cause`).
+ *  Side effects are applied by createYnabClient before it throws: 401 → markNeedsReauth;
+ *  final 429 → rate_limited_until = now + 15 min on every sync_state row of the user (limit is per token). */
 export function toAppError(e: YnabApiError): AppError;
 
 // ynab/sync.ts
@@ -1188,7 +1190,9 @@ export const syncRoutes: Hono<AppEnv>;
 // ai/claude.ts
 export const CLAUDE_MODEL = "claude-opus-5-5";
 export function getClaude(env: Env, db: DB, userId: string): Promise<Anthropic>;  // via getAnthropicKey
-/** messages.parse + zodOutputFormat with the §9.4 error policy. */
+/** Structured output (`output_config.format` from the zod schema) with the §9.4 error policy. Implemented with
+ *  client.beta.messages.create + local zod validation (not messages.parse, which throws on a truncated
+ *  max_tokens/refusal body before stop_reason can be checked); uses the server-side refusal fallback beta. */
 export function callStructured<T extends z.ZodType>(client: Anthropic, args: {
   schema: T; system: Anthropic.TextBlockParam[]; user: string;
   effort: "low" | "medium"; maxTokens: number; timeoutMs: number; maxRetries: number;
@@ -1202,7 +1206,8 @@ export function parseUtterance(ctx: AiCtx, text: string): Promise<z.infer<typeof
 /** Uses WP5 excludedTxnIds and WP5 possibleIntentFor (§9.5). */
 export function listInbox(ctx: AiCtx): Promise<InboxItem[]>;
 export function countInbox(db: DB, userId: string, planId: string): Promise<number>;
-/** Fills inbox_suggestions for inbox txns lacking one. Returns #suggested. Silently returns 0 when no key/consent. */
+/** Fills inbox_suggestions for inbox txns lacking one. Returns #suggested. Silently returns 0 when no key/consent.
+ *  Other ai_* errors are thrown (rows from earlier batches are kept); runUserCycle records them in SyncResult.errors. */
 export function suggestInboxCategories(ctx: AiCtx, opts: { max: number; effort: "low" | "medium" }): Promise<number>;
 
 // ai/stt.ts
@@ -2186,7 +2191,8 @@ npm run dev                                     # Vite + workerd; SPA and API on
 - `__Host-` cookies with `Secure` work on `http://localhost` in Chromium and Firefox.
 - To fire cron locally:
   ```
-  curl -X POST "http://localhost:5173/cdn-cgi/local/explorer/api/local/scheduled?worker=ai-boost-for-ynab"
+  curl -X POST "http://localhost:5173/cdn-cgi/local/explorer/api/local/scheduled?worker=ai-boost-for-ynab" \
+    -H 'Content-Type: application/json' -d '{"cron":"0 */6 * * *"}'
   ```
   (local explorer endpoint), or call `POST /api/sync`.
 
@@ -2286,3 +2292,4 @@ Revision 2 applies an adversarial review of revision 1 and `RESEARCH.md`. Each i
 | 32 | Merge WP4 inbox into WP5 | R | The parallelism is real: WP4 (Claude + STT) and WP5 (engine) share no code. With undo deferred and `excludedTxnIds`/`possibleIntentFor` frozen in §8.5, the remaining coupling is two read-only function calls. |
 
 | 33 | Owner decision (post-review) | — | Cron every 6 h, not 15 min. No sync on app open/focus; a user-initiated "Sync now" (this user only) instead. `CycleTrigger` = cron | manual | intent_create. Landing page at `/welcome` per docs/LANDING.md, owned by WP6; logged-out `/` redirects there. |
+| 34 | Integration (post-implementation) | A | Contract clarifications only, no signature changes: `toAppError` is pure (side effects in `createYnabClient`); `callStructured` uses beta `messages.create` + local validation; `suggestInboxCategories` throws non-consent AI errors; `requireAllowedUser` exempts `DELETE /api/account`; `validate("json")` enforces Content-Type. Details in docs/BUILD_NOTES.md §10. |

@@ -1,0 +1,16 @@
+{
+  "name": "5b. One charge fitting two open Amazon intents → one cross-intent review (intentId null)",
+  "intents": [
+    { "id": "i1", "payee": "Amazon", "merchantKind": "amazon", "date": "2026-11-05",
+      "lines": [{ "id": "a1", "categoryId": "cat-a", "amount": 30000 }, { "id": "a2", "categoryId": "cat-b", "amount": 10000 }] },
+    { "id": "i2", "payee": "Amazon", "merchantKind": "amazon", "date": "2026-11-06",
+      "lines": [{ "id": "b1", "categoryId": "cat-c", "amount": 25000 }, { "id": "b2", "categoryId": "cat-d", "amount": 15000 }] }
+  ],
+  "txns": [ { "id": "c1", "date": "2026-11-08", "amount": -42400, "importPayee": "AMZN Mktp US*2K4L" } ],
+  "expected": [ { "kind": "review", "intentId": null, "txnId": "c1", "reviewKind": "amazon_split" } ],
+  "forbidKinds": ["apply"],
+  "expectOptions": [
+    { "intentId": "i1", "transactionId": "c1", "lineIds": ["a1", "a2"] },
+    { "intentId": "i2", "transactionId": "c1", "lineIds": ["b1", "b2"] }
+  ]
+}

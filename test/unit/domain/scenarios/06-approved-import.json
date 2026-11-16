@@ -1,0 +1,9 @@
+{
+  "name": "6. An approved, user-categorized import that fits an intent → approved_import review, never apply",
+  "intents": [{ "id": "i1", "payee": "Target", "date": "2026-11-10", "total": 50000, "approximate": true,
+    "lines": [{ "id": "l1", "categoryId": "cat-home", "amount": 30000 }, { "id": "l2", "categoryId": "cat-kids", "amount": 20000 }] }],
+  "txns": [ { "id": "t1", "date": "2026-11-10", "amount": -48120, "payee": "Target", "importPayee": "TARGET T-1234", "approved": true, "categoryId": "cat-household" } ],
+  "categoryNames": { "cat-household": "Household" },
+  "expected": [ { "kind": "review", "intentId": "i1", "reviewKind": "approved_import", "summary": "Import already approved as Household; apply your split?" } ],
+  "forbidKinds": ["apply"]
+}

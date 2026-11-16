@@ -1,0 +1,16 @@
+{
+  "name": "2. Two Starbucks intents at ~$6 and two charges → reviews, never auto",
+  "intents": [
+    { "id": "i1", "payee": "Starbucks", "date": "2026-11-10", "total": 6000, "approximate": true, "categoryId": "cat-coffee" },
+    { "id": "i2", "payee": "Starbucks", "date": "2026-11-11", "total": 6000, "approximate": true, "categoryId": "cat-coffee" }
+  ],
+  "txns": [
+    { "id": "t1", "date": "2026-11-11", "amount": -5750, "importPayee": "STARBUCKS STORE 01234" },
+    { "id": "t2", "date": "2026-11-12", "amount": -6200, "importPayee": "STARBUCKS STORE 01234" }
+  ],
+  "expected": [
+    { "kind": "review", "intentId": "i1", "reviewKind": "ambiguous_match" },
+    { "kind": "review", "intentId": "i2", "reviewKind": "ambiguous_match" }
+  ],
+  "forbidKinds": ["apply"]
+}
