@@ -16,7 +16,7 @@ export interface AiCtx { env: Env; db: DB; userId: string; planId: string; setti
 export const PARSE_CALL = { effort: "low", maxTokens: 8000, timeoutMs: 30_000, maxRetries: 1 } as const;
 
 /** Safe "today" for a stored timezone (an invalid IANA name falls back to UTC instead of throwing). */
-export function safeTodayIn(tz: string, now: Date = new Date()): string {
+function safeTodayIn(tz: string, now: Date = new Date()): string {
   try {
     return todayIn(tz, now);
   } catch {

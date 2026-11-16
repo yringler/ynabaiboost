@@ -8,7 +8,6 @@ sets the categories (it splits the transaction if the note had several), and rem
 It also handles:
 
 - **Amazon orders.** One order that is charged as several shipments is matched to the right charges.
-- **The uncategorized inbox.** It suggests categories for imported transactions, and you approve them with one tap.
 - **Reviews.** When a match is not certain, it asks you instead of guessing.
 
 It runs on one Cloudflare Worker with D1, a React SPA, Workers AI for optional server-side speech-to-text, and
@@ -23,7 +22,7 @@ Claude (`claude-opus-5-5`) using **your own Anthropic API key**. It is not affil
 ## How it behaves
 
 - **Sync schedule:** a cron trigger runs every 6 hours (`0 */6 * * *`). For each allowed user it pulls the YNAB
-  changes, reconciles notes with imports, and suggests inbox categories.
+  changes and reconciles notes with imports.
 - **No background sync in the browser.** Opening or focusing the app does not sync. A sync happens only when:
   - you tap **Sync now** in the header (`POST /api/sync`, for your account only);
   - you save a new note;

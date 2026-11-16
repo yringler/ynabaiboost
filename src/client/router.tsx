@@ -3,7 +3,7 @@
 //   authed : GET /api/me must succeed.  401 on "/" → /welcome; 401 elsewhere → /login; 403 not_allowed → /login?error=not_allowed
 //     /onboarding
 //     shell (header + bottom nav): plan, Anthropic key and AI consent required, else → /onboarding
-//       /, /pending, /inbox, /activity, /settings, /admin (admins only)
+//       /, /pending, /activity, /settings, /admin (admins only)
 // App screens are code-split so the public landing page (/welcome) stays light.
 import type { QueryClient } from "@tanstack/react-query";
 import {
@@ -119,7 +119,6 @@ export const pendingRoute = createRoute({
     s.tab === "review" || s.tab === "pending" || s.tab === "stale" ? { tab: s.tab } : {},
   component: lazyRouteComponent(() => import("./routes/pending"), "PendingPage"),
 });
-const inboxRoute = createRoute({ getParentRoute: () => shellRoute, path: "/inbox", component: lazyRouteComponent(() => import("./routes/inbox"), "InboxPage") });
 const activityRoute = createRoute({ getParentRoute: () => shellRoute, path: "/activity", component: lazyRouteComponent(() => import("./routes/activity"), "ActivityPage") });
 const settingsRoute = createRoute({ getParentRoute: () => shellRoute, path: "/settings", component: lazyRouteComponent(() => import("./routes/settings"), "SettingsPage") });
 const adminRoute = createRoute({
@@ -137,7 +136,7 @@ export const routeTree = rootRoute.addChildren([
   privacyRoute,
   authedRoute.addChildren([
     onboardingRoute,
-    shellRoute.addChildren([captureRoute, pendingRoute, inboxRoute, activityRoute, settingsRoute, adminRoute]),
+    shellRoute.addChildren([captureRoute, pendingRoute, activityRoute, settingsRoute, adminRoute]),
   ]),
 ]);
 

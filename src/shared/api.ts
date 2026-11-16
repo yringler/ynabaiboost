@@ -1,7 +1,7 @@
 // src/shared/api.ts
 import { z } from "zod";
 import {
-  ActivityEntry, AdminUser, Account, Category, CurrencyFormat, Id, InboxItem, Intent, IntentCreate,
+  ActivityEntry, AdminUser, Account, Category, CurrencyFormat, Id, Intent, IntentCreate,
   IntentDraft, IntentLineDraft, InputMode, IsoDate, Me, Payee, ReviewItem, SettingsPatch,
   SettingsShape, SyncResult, TxnView,
 } from "./schemas";
@@ -42,10 +42,6 @@ export const ResolveReviewReq = z.union([
   z.object({ optionId: z.string() }),
   z.object({ dismiss: z.literal(true) }),
 ]);
-export const InboxApproveReq = z.object({
-  items: z.array(z.object({ transactionId: Id, categoryId: Id })).min(1).max(50),
-});
-export const InboxDismissReq = z.object({ transactionIds: z.array(Id).min(1).max(50) });
 export const AdminUserPatchReq = z.object({ sttAllowed: z.boolean() }).strict();
 export const IntentListQuery = z.object({ status: z.enum(["open", "stale", "resolved", "cancelled"]).default("open") });
 export const ActivityQuery = z.object({ before: z.coerce.number().int().optional() });
@@ -68,12 +64,9 @@ export const IntentRes = z.object({ intent: Intent });
 export const CreateIntentsRes = z.object({ intents: z.array(Intent), warnings: z.array(z.string()) });
 export const CandidatesRes = z.object({ transactions: z.array(TxnView) });
 export const ReviewsRes = z.object({ reviews: z.array(ReviewItem) });
-export const InboxRes = z.object({ items: z.array(InboxItem), lastSyncAt: z.int().nullable() });
-export const InboxApproveRes = z.object({ approved: z.int(), failed: z.array(z.object({ transactionId: Id, message: z.string() })) });
 export const ActivityRes = z.object({ entries: z.array(ActivityEntry), nextCursor: z.int().nullable() });
 export const AdminUsersRes = z.object({ users: z.array(AdminUser) });
 export const SttRes = z.object({ text: z.string() });
-export const SuggestRes = z.object({ suggested: z.int() });
 export const AuthConfigRes = z.object({ oauthAvailable: z.boolean() });
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -105,10 +98,6 @@ export const API = {
   linkIntent:      route("POST",   "/api/intents/:id/link", LinkIntentReq, IntentRes),
   listReviews:     route("GET",    "/api/reviews", null, ReviewsRes),
   resolveReview:   route("POST",   "/api/reviews/:id/resolve", ResolveReviewReq, Ok),
-  inbox:           route("GET",    "/api/inbox", null, InboxRes),
-  inboxSuggest:    route("POST",   "/api/inbox/suggest", null, SuggestRes),
-  inboxApprove:    route("POST",   "/api/inbox/approve", InboxApproveReq, InboxApproveRes),
-  inboxDismiss:    route("POST",   "/api/inbox/dismiss", InboxDismissReq, Ok),
   stt:             route("POST",   "/api/stt", null, SttRes),                  // raw audio body
   activity:        route("GET",    "/api/activity", null, ActivityRes, ActivityQuery),
   adminUsers:      route("GET",    "/api/admin/users", null, AdminUsersRes),

@@ -114,7 +114,6 @@ describe("LandingPage", () => {
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "How it works",
       "One order, three charges.",
-      "Imports you haven't touched?",
       "Your keys, your budget.",
       "Try it on your next receipt.",
     ]);
@@ -124,8 +123,8 @@ describe("LandingPage", () => {
     expect(screen.getAllByRole("link", { name: "Connect YNAB" })).toHaveLength(2);
     expect(screen.getByRole("link", { name: "Use a personal access token" }).getAttribute("href")).toBe("/login?pat=1");
     expect(screen.getAllByRole("link", { name: "Privacy" }).every((a) => a.getAttribute("href") === "/privacy")).toBe(true);
-    // three labelled pictures: story, split, inbox peek
+    // two labelled pictures: story, split
     expect(screen.getAllByRole("img").every((el) => (el.getAttribute("aria-label") ?? "").length > 20)).toBe(true);
-    expect(screen.getAllByRole("img")).toHaveLength(3);
+    expect(screen.getAllByRole("img")).toHaveLength(2);
   });
 });

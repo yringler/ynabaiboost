@@ -126,7 +126,6 @@ CREATE TABLE ynab_transactions (                             -- rolling ~120-day
 );
 CREATE INDEX ynab_txn_plan_date ON ynab_transactions(user_id, plan_id, date);
 CREATE INDEX ynab_txn_matched   ON ynab_transactions(user_id, matched_transaction_id);
-CREATE INDEX ynab_txn_inbox     ON ynab_transactions(user_id, plan_id, approved, deleted);
 
 -- ── intents ─────────────────────────────────────────────────────────────────
 CREATE TABLE intents (
@@ -175,7 +174,7 @@ CREATE TABLE intent_lines (
   UNIQUE (intent_id, idx)
 );
 
--- ── matching / review / inbox / audit ──────────────────────────────────────
+-- ── matching / review / audit ──────────────────────────────────────────────
 CREATE TABLE matches (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -209,18 +208,6 @@ CREATE UNIQUE INDEX reviews_open_intent ON reviews(user_id, intent_id) WHERE sta
 CREATE UNIQUE INDEX reviews_open_txn    ON reviews(user_id, ynab_txn_id) WHERE status = 'open' AND intent_id IS NULL;
 -- Every intent that appears in an open review's options has intents.status='review' (owner or not).
 -- The engine never puts an intent into a second open review (it checks openReviewIntentIds).
-
-CREATE TABLE inbox_suggestions (
-  user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  ynab_txn_id  TEXT NOT NULL,
-  category_id  TEXT,                                         -- NULL = model had no guess
-  confidence   TEXT NOT NULL CHECK (confidence IN ('high','medium','low')),
-  reason       TEXT NOT NULL,
-  source       TEXT NOT NULL CHECK (source IN ('claude','ynab_existing','history')),
-  status       TEXT NOT NULL DEFAULT 'suggested' CHECK (status IN ('suggested','applied','dismissed')),
-  created_at   INTEGER NOT NULL,
-  PRIMARY KEY (user_id, ynab_txn_id)
-);
 
 CREATE TABLE audit_log (
   id           TEXT PRIMARY KEY,

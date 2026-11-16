@@ -8,7 +8,6 @@ export const queryKeys = {
   intentsAll: ["intents"] as const,
   candidates: (intentId: string) => ["candidates", intentId] as const,
   reviews: ["reviews"] as const,
-  inbox: ["inbox"] as const,
   activity: ["activity"] as const,
   adminUsers: ["adminUsers"] as const,
 };
@@ -16,7 +15,7 @@ export const queryKeys = {
 /** Mutation key of the manual "Sync now" mutation (read back with useMutationState for banners). */
 export const syncMutationKey = ["sync"] as const;
 
-/** Everything a sync or a write can change. Invalidated after "Sync now" and after intent/review/inbox writes. */
+/** Everything a sync or a write can change. Invalidated after "Sync now" and after intent/review writes. */
 export const DATA_KEYS = [
-  queryKeys.me, queryKeys.intentsAll, queryKeys.reviews, queryKeys.inbox, queryKeys.activity,
+  queryKeys.me, queryKeys.intentsAll, queryKeys.reviews, queryKeys.activity,
 ] as const;

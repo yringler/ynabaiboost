@@ -5,7 +5,6 @@ import "./landing.css";
 import { ConnectButton, useConnectTarget } from "./ConnectButton";
 import { Hero } from "./Hero";
 import { Mic } from "./icons";
-import { InboxPeek } from "./InboxPeek";
 import { SplitDemo } from "./SplitDemo";
 import { Steps } from "./Steps";
 
@@ -70,9 +69,6 @@ export function LandingPage() {
         <Steps />
         <Feature id="amazon-title" title="One order, three charges." line="Say what's in the box. It's split across every charge.">
           <SplitDemo />
-        </Feature>
-        <Feature id="inbox-title" title="Imports you haven't touched?" line="Claude suggests a category. One tap to approve.">
-          <InboxPeek />
         </Feature>
         <section className="l-section" aria-labelledby="data-title">
           <div className="l-wrap">

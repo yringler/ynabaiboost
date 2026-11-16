@@ -478,7 +478,7 @@ describe("safeDeletePlaceholder (§10.7)", () => {
   });
 });
 
-describe("excludedTxnIds / possibleIntentFor / countOpen", () => {
+describe("excludedTxnIds / countOpen", () => {
   it("excludedTxnIds covers placeholders (not none/failed), live matches, open reviews only", async () => {
     await seed({ payee: "A", total: 1000, placeholderTxnId: "ph-ok", placeholderStatus: "created" });
     await seed({ payee: "B", total: 1000, placeholderTxnId: "ph-final", placeholderStatus: "final" });
@@ -496,17 +496,6 @@ describe("excludedTxnIds / possibleIntentFor / countOpen", () => {
       { id: uid("r"), userId, intentId: d.id, ynabTxnId: null, kind: "ambiguous_match", options: JSON.stringify([opt("r-dismissed")]), summary: "s", status: "dismissed", createdAt: 1 },
     ]);
     expect(await L.excludedTxnIds(db(), userId, PLAN)).toEqual(new Set(["ph-ok", "ph-final", "m-planned", "m-applied", "r-txn", "r-opt"]));
-  });
-
-  it("possibleIntentFor attaches the best open intent with a loose score ≥ 0.5", async () => {
-    const i = await seed({ payee: "Costco", total: 200000, date: "2026-11-10" });
-    await seed({ payee: "Shell", total: 5000, date: "2026-11-10" });
-    const near = mkTxn({ id: uid("n"), amount: -150000, importPayeeName: "COSTCO WHSE", date: "2026-11-12" });
-    const far = mkTxn({ id: uid("f"), amount: -999000, importPayeeName: "APPLE STORE", date: "2026-11-12" });
-    const res = await L.possibleIntentFor(db(), userId, PLAN, [near, far]);
-    expect(res.get(near.id)).toEqual({ intentId: i.id, payee: "Costco", totalAmount: 200000, date: "2026-11-10" });
-    expect(res.has(far.id)).toBe(false);
-    expect((await L.possibleIntentFor(db(), userId, PLAN, [])).size).toBe(0);
   });
 
   it("countOpen", async () => {

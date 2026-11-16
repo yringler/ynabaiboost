@@ -37,9 +37,8 @@ export function PrivacyPage() {
       <section className="flex flex-col gap-2">
         <h2 className="text-lg font-semibold">What goes to Anthropic</h2>
         <p>
-          Only after you turn on AI data consent: the text you type or dictate, your category and payee names, and (for inbox
-          suggestions) the payee, amount, date and memo of uncategorized transactions are sent to Anthropic's Claude API, using
-          your own API key, to parse purchases and suggest categories. Anthropic's commercial terms apply to that key.
+          Only after you turn on AI data consent: the text you type or dictate and your category, account and payee names
+          are sent to Anthropic's Claude API, using your own API key, to parse purchases into categorized entries. Anthropic's commercial terms apply to that key.
         </p>
       </section>
 

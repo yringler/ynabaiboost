@@ -5,11 +5,10 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { addDays, todayIn } from "../../src/shared/dates";
 import { getDb } from "../../src/worker/db/client";
-import { intents, matches, syncState, users, ynabCategories, ynabCategoryGroups, ynabTransactions } from "../../src/worker/db/schema";
-import { newId } from "../../src/worker/lib/ids";
+import { syncState, users, ynabCategories, ynabCategoryGroups, ynabTransactions } from "../../src/worker/db/schema";
 import {
   getAccounts, getAllPayees, getCachedTxns, getCurrency, getRecentCategoryIds, getSelectableCategories, getTopPayees,
-  getUncategorizedIds, isUncategorized, lastAccountForPayee, lastOutflowCategoryForPayee, payeeCategoryHistory, toTxnView,
+  getUncategorizedIds, isUncategorized, lastAccountForPayee, toTxnView,
   upsertTxnsStmts,
 } from "../../src/worker/ynab/cache";
 import { createYnabClientForToken } from "../../src/worker/ynab/client";
@@ -207,35 +206,10 @@ describe("cache queries", () => {
     expect([...(await getUncategorizedIds(db, uid, PLAN_ID))]).toEqual(["c-uncat"]);
   });
 
-  it("payeeCategoryHistory counts approved, categorized uses per payee", async () => {
-    const h = await payeeCategoryHistory(db, uid, PLAN_ID, ["p-costco", "p-starbucks", "p-amazon", "p-nobody"]);
-    expect(h.get("p-costco")).toEqual([{ categoryId: "c-groceries", count: 2 }]);
-    expect(h.get("p-starbucks")).toEqual([{ categoryId: "c-dining", count: 1 }]); // t-sbux-2 is unapproved
-    expect(h.has("p-amazon")).toBe(false);                                         // uncategorized/split only
-    expect((await payeeCategoryHistory(db, uid, PLAN_ID, [])).size).toBe(0);
-  });
-
   it("lastAccountForPayee uses payee similarity ≥ 0.8 on the most recent txn", async () => {
     expect(await lastAccountForPayee(db, uid, PLAN_ID, "costco")).toBe("acc-visa");
     expect(await lastAccountForPayee(db, uid, PLAN_ID, "Starbucks")).toBe("acc-checking");
     expect(await lastAccountForPayee(db, uid, PLAN_ID, "Totally Unknown Shop")).toBeNull();
-  });
-
-  it("lastOutflowCategoryForPayee: most recent approved (or matched) categorized outflow at a similar payee", async () => {
-    expect(await lastOutflowCategoryForPayee(db, uid, PLAN_ID, ["COSTCO WHSE #0123", null])).toBe("c-groceries");
-    expect(await lastOutflowCategoryForPayee(db, uid, PLAN_ID, [null])).toBeNull();
-    expect(await lastOutflowCategoryForPayee(db, uid, PLAN_ID, ["Nowhere"])).toBeNull();
-    // an unapproved outflow counts once our app matched it
-    await db.update(ynabTransactions).set({ categoryId: "c-groceries" }).where(and(eq(ynabTransactions.userId, uid), eq(ynabTransactions.id, "t-sbux-2")));
-    expect(await lastOutflowCategoryForPayee(db, uid, PLAN_ID, ["Starbucks"])).toBe("c-dining");
-    // a matched txn is recognised through the matches table (intent row needed for the FK)
-    await db.insert(intents).values({
-      id: `i-${uid}`, userId: uid, planId: PLAN_ID, shortRef: `ABC${n}`, status: "resolved", rawText: "x", inputMode: "typed",
-      payee: "Starbucks", merchantKind: "in_person", direction: "outflow", intentDate: today, totalAmount: 6000, tolerance: 100,
-      approximate: false, expiresOn: today, createdAt: 1, updatedAt: 1,
-    });
-    await db.insert(matches).values({ id: newId(), userId: uid, intentId: `i-${uid}`, ynabTxnId: "t-sbux-2", kind: "single", lineIds: "[]", allocation: "[]", state: "applied", createdAt: 1 });
-    expect(await lastOutflowCategoryForPayee(db, uid, PLAN_ID, ["Starbucks"])).toBe("c-groceries");
   });
 
   it("toTxnView maps names, uncategorized, transfer and import flags", async () => {

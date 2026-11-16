@@ -1,11 +1,11 @@
-// components/BottomNav.tsx — WP6 (DESIGN §11.1): Capture · Pending(badge) · Inbox(badge) · Settings.
+// components/BottomNav.tsx — WP6 (DESIGN §11.1): Capture · Pending(badge) · Settings.
 import { Link } from "@tanstack/react-router";
-import { InboxIcon, ListTodoIcon, MicIcon, SettingsIcon } from "lucide-react";
+import { ListTodoIcon, MicIcon, SettingsIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import type { Me } from "../../shared/schemas";
 
 interface Item {
-  to: "/" | "/pending" | "/inbox" | "/settings";
+  to: "/" | "/pending" | "/settings";
   label: string;
   icon: ComponentType<{ className?: string }>;
   badge?: number;
@@ -16,7 +16,6 @@ export function BottomNav({ counts }: { counts: Me["counts"] | null }) {
     { to: "/", label: "Capture", icon: MicIcon },
     // Pending's badge counts what needs the user: reviews plus stale intents.
     { to: "/pending", label: "Pending", icon: ListTodoIcon, badge: counts ? counts.review + counts.stale : 0 },
-    { to: "/inbox", label: "Inbox", icon: InboxIcon, badge: counts?.inbox ?? 0 },
     { to: "/settings", label: "Settings", icon: SettingsIcon },
   ];
   return (

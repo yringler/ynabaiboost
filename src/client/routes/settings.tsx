@@ -336,16 +336,9 @@ export function SettingsPage() {
       <Section title="AI">
         <ToggleRow
           label="AI data consent"
-          hint="Send purchase text, category and payee names, and inbox transactions to Anthropic"
+          hint="Send purchase text and category and payee names to Anthropic"
           checked={s.aiDataConsent}
           onChange={(aiDataConsent) => save({ aiDataConsent })}
-        />
-        <ToggleRow
-          label="Background inbox suggestions"
-          hint="Ask Claude about new imports during background syncs"
-          checked={s.backgroundInboxSuggestions}
-          onChange={(backgroundInboxSuggestions) => save({ backgroundInboxSuggestions })}
-          disabled={!s.aiDataConsent}
         />
         <Separator />
         <AnthropicKeyForm hasKey={me.hasAnthropicKey} />

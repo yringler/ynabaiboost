@@ -26,13 +26,11 @@ const m = vi.hoisted(() => ({
   getYnabAccessToken: vi.fn(async () => "tok"),
   markNeedsReauth: vi.fn(async () => undefined),
   reconcileUser: vi.fn(async (_ctx: unknown, _delta?: unknown) => ({ matched: 0, reviewsCreated: 0, stale: 0, errors: [] as string[] })),
-  suggestInboxCategories: vi.fn(async () => 0),
 }));
 vi.mock("../../src/worker/auth/users", () => ({ isAllowed: m.isAllowed, getUser: m.getUser, isAdmin: () => false, upsertUser: vi.fn() }));
 vi.mock("../../src/worker/auth/settings", () => ({ getSettings: m.getSettings, updateSettings: vi.fn() }));
 vi.mock("../../src/worker/auth/ynabToken", () => ({ getYnabAccessToken: m.getYnabAccessToken, markNeedsReauth: m.markNeedsReauth }));
 vi.mock("../../src/worker/engine/reconcile", () => ({ reconcileUser: m.reconcileUser, countOpen: vi.fn() }));
-vi.mock("../../src/worker/ai/inbox", () => ({ suggestInboxCategories: m.suggestInboxCategories, listInbox: vi.fn(), countInbox: vi.fn() }));
 
 // index.ts loads the real modules before vi.mock applies: reset and import the modules under test afresh.
 let Cy: typeof import("../../src/worker/jobs/cycle");
@@ -77,7 +75,6 @@ beforeEach(async () => {
   network.use(...fake.handlers());
   vi.spyOn(Cl.backoff, "sleep").mockResolvedValue(undefined);
   m.reconcileUser.mockClear();
-  m.suggestInboxCategories.mockClear();
   m.reconcileUser.mockImplementation(async () => ({ matched: 0, reviewsCreated: 0, stale: 0, errors: [] }));
   uid = await newUser();
 });
@@ -135,17 +132,16 @@ describe("withUserLock", () => {
 });
 
 describe("runUserCycle", () => {
-  it("manual: initial sync, reconcile with the delta, no inbox suggestions; stores last_cycle_at", async () => {
+  it("manual: initial sync, reconcile with the delta; stores last_cycle_at", async () => {
     m.reconcileUser.mockResolvedValueOnce({ matched: 2, reviewsCreated: 1, stale: 3, errors: ["intent x: boom"] });
     const r = await Cy.runUserCycle(env, uid, "manual");
     expect(SyncResult.parse(r)).toEqual(r);
-    expect(r).toMatchObject({ skipped: null, matched: 2, reviewsCreated: 1, stale: 3, inboxSuggested: 0,
+    expect(r).toMatchObject({ skipped: null, matched: 2, reviewsCreated: 1, stale: 3,
       errors: [{ code: "engine", message: "intent x: boom" }] });
     expect(r.changedTransactions).toBe(seedPlan(todayIn("UTC")).transactions.length);
     const [ctx, delta] = m.reconcileUser.mock.calls[0] as unknown as [Record<string, unknown>, { initial: boolean }];
     expect(delta.initial).toBe(true);
     expect(ctx).toMatchObject({ userId: uid, planId: PLAN_ID, actor: "user", currency: { isoCode: "USD", decimalDigits: 2 }, today: todayIn("UTC") });
-    expect(m.suggestInboxCategories).not.toHaveBeenCalled();
     const s = await state();
     expect(s?.lastCycleAt).toBe(r.ranAt);
     expect(s?.lastError).toBe("engine: intent x: boom");
@@ -166,32 +162,15 @@ describe("runUserCycle", () => {
     expect((await Cy.runUserCycle(env, uid, "intent_create")).skipped).toBeNull();
   });
 
-  it("cron: no initial sync; 30 min throttle; background inbox suggestions; actor cron", async () => {
+  it("cron: no initial sync; 30 min throttle; actor cron", async () => {
     expect((await Cy.runUserCycle(env, uid, "cron")).skipped).toBe("no_plan");
     expect(fake.requests).toHaveLength(0);
     await Cy.runUserCycle(env, uid, "manual");
     expect((await Cy.runUserCycle(env, uid, "cron")).skipped).toBe("throttled");
     await setState({ lastCycleAt: Date.now() - 31 * 60_000 });
-    m.suggestInboxCategories.mockResolvedValueOnce(5);
     const r = await Cy.runUserCycle(env, uid, "cron");
-    expect(r).toMatchObject({ skipped: null, inboxSuggested: 5 });
-    expect(m.suggestInboxCategories).toHaveBeenCalledWith(expect.objectContaining({ userId: uid, planId: PLAN_ID }), { max: 24, effort: "medium" });
+    expect(r).toMatchObject({ skipped: null });
     expect((m.reconcileUser.mock.calls.at(-1) as unknown as [{ actor: string }])[0].actor).toBe("cron");
-  });
-
-  it("cron respects backgroundInboxSuggestions=false and survives a suggestion failure", async () => {
-    const quiet = await newUser({ settings: { backgroundInboxSuggestions: false } });
-    await Cy.runUserCycle(env, quiet, "manual");
-    await setState({ lastCycleAt: 0 }, quiet);
-    await Cy.runUserCycle(env, quiet, "cron");
-    expect(m.suggestInboxCategories).not.toHaveBeenCalled();
-
-    await Cy.runUserCycle(env, uid, "manual");
-    await setState({ lastCycleAt: 0 });
-    m.suggestInboxCategories.mockRejectedValueOnce(new L.AppError("ai_unavailable", "down"));
-    const r = await Cy.runUserCycle(env, uid, "cron");
-    expect(r.skipped).toBeNull();
-    expect(r.errors).toEqual([{ code: "ai_unavailable", message: "down" }]);
   });
 
   it("skip reasons: not_allowed, reauth, no_plan, rate_limited, locked", async () => {

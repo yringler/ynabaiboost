@@ -1,14 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { syncErrorText } from "../../src/client/components/AppShell";
 import { describeSync } from "../../src/client/hooks/useSync";
-import { highConfidenceItems } from "../../src/client/routes/inbox";
 import { extractUserId, parseLoginSearch } from "../../src/client/lib/routing";
-import type { InboxItem, SyncResult } from "../../src/shared/schemas";
+import type { SyncResult } from "../../src/shared/schemas";
 
 describe("login search", () => {
   it("parses pat, error, uid and a safe redirect", () => {
-    expect(parseLoginSearch({ pat: "1", error: "not_allowed", uid: "u-1", redirect: "/inbox" }))
-      .toEqual({ pat: true, error: "not_allowed", uid: "u-1", redirect: "/inbox" });
+    expect(parseLoginSearch({ pat: "1", error: "not_allowed", uid: "u-1", redirect: "/pending" }))
+      .toEqual({ pat: true, error: "not_allowed", uid: "u-1", redirect: "/pending" });
     expect(parseLoginSearch({ pat: 1 })).toEqual({ pat: true });
   });
   it("drops absolute or protocol-relative redirects", () => {
@@ -23,7 +22,7 @@ describe("login search", () => {
 
 describe("sync copy", () => {
   const r = (p: Partial<SyncResult>): SyncResult => ({
-    ranAt: 1, skipped: null, changedTransactions: 0, matched: 0, reviewsCreated: 0, stale: 0, inboxSuggested: 0, errors: [], ...p,
+    ranAt: 1, skipped: null, changedTransactions: 0, matched: 0, reviewsCreated: 0, stale: 0, errors: [], ...p,
   });
   it("describes results", () => {
     expect(describeSync(r({ skipped: "throttled" })).kind).toBe("info");
@@ -34,26 +33,5 @@ describe("sync copy", () => {
     expect(syncErrorText("ynab_subscription_lapsed: 403.1")).toBe("Sync failing: YNAB subscription lapsed");
     expect(syncErrorText("anthropic_billing: low")).toBe("Anthropic: credit balance too low");
     expect(syncErrorText("weird: thing broke")).toBe("Sync failing: thing broke");
-  });
-});
-
-describe("inbox bulk approve", () => {
-  const item = (id: string, s: InboxItem["suggestion"], pi: InboxItem["possibleIntent"] = null): InboxItem => ({
-    transaction: {
-      id, date: "2026-11-16", amount: -1000, payeeName: null, importPayeeName: "X", accountId: "a", accountName: "A",
-      categoryId: null, memo: null, approved: false, cleared: "cleared", isSplit: false, isTransfer: false, isImported: true,
-    },
-    suggestion: s,
-    possibleIntent: pi,
-  });
-  it("only takes high-confidence suggestions with a category and no possible intent", () => {
-    const items = [
-      item("1", { categoryId: "c", confidence: "high", reason: "", source: "claude" }),
-      item("2", { categoryId: "c", confidence: "medium", reason: "", source: "claude" }),
-      item("3", { categoryId: null, confidence: "high", reason: "", source: "claude" }),
-      item("4", { categoryId: "c", confidence: "high", reason: "", source: "history" }, { intentId: "i", payee: "P", totalAmount: 1, date: "2026-11-16" }),
-      item("5", null),
-    ];
-    expect(highConfidenceItems(items)).toEqual([{ transactionId: "1", categoryId: "c" }]);
   });
 });

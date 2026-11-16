@@ -704,8 +704,7 @@
   padding: 0;
   list-style: none;
 }
-.landing .split-row,
-.landing .peek-row {
+.landing .split-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -734,28 +733,6 @@
   width: 1.5rem;
   height: 1.5rem;
   font-size: 0.85rem;
-}
-
-/* ── Inbox peek ──────────────────────────────────────────────────────────── */
-.landing .peek {
-  padding: 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--bg-sunken);
-}
-.landing .chip-ai svg {
-  font-size: 0.9rem;
-}
-.landing .peek-ok {
-  display: grid;
-  place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-size: 1.1rem;
-  box-shadow: 0 4px 12px color-mix(in oklab, var(--accent) 30%, transparent);
 }
 
 /* ── Keyframes (prefixed: the app also loads tw-animate-css) ─────────────── */

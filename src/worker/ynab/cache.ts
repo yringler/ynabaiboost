@@ -1,12 +1,12 @@
 // ynab/cache.ts — WP3 (DESIGN §8.3, §5). Cache queries, upserts and toTxnView.
 // Effective category flags are computed at query time: hidden = c.hidden OR g.hidden;
 // internal = g.name = 'Internal Master Category'; cc_payment = g.name = 'Credit Card Payments' (spike S1).
-import { and, desc, eq, gte, inArray, isNull, lt, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
 import { payeeSimilarity } from "../../shared/payee";
 import type { Account, Category, CurrencyFormat, Payee, TxnView } from "../../shared/schemas";
 import {
-  matches, syncState, ynabAccounts, ynabCategories, ynabCategoryGroups, ynabPayees, ynabTransactions,
+  syncState, ynabAccounts, ynabCategories, ynabCategoryGroups, ynabPayees, ynabTransactions,
 } from "../db/schema";
 import type { BatchItem, DB } from "../env";
 import type { CachedAccount, CachedCategory, CachedCategoryGroup, CachedPayee, YnabTxn } from "./types";
@@ -233,35 +233,6 @@ export async function getUncategorizedIds(db: DB, userId: string, planId: string
   return new Set(rows.map((r) => r.id));
 }
 
-/** Per payee id: categories it was used with (approved, non-split, categorized, not internal), most-used first. */
-export async function payeeCategoryHistory(db: DB, userId: string, planId: string, payeeIds: string[]): Promise<Map<string, { categoryId: string; count: number }[]>> {
-  const out = new Map<string, { categoryId: string; count: number }[]>();
-  const ids = [...new Set(payeeIds)];
-  if (ids.length === 0) return out;
-  const n = sql<number>`COUNT(*)`;
-  for (const part of chunk(ids, 90)) {
-    const rows = await db.select({ payeeId: ynabTransactions.payeeId, categoryId: ynabTransactions.categoryId, n })
-      .from(ynabTransactions)
-      .innerJoin(ynabCategories, and(eq(ynabCategories.userId, ynabTransactions.userId), eq(ynabCategories.id, ynabTransactions.categoryId)))
-      .innerJoin(ynabCategoryGroups, groupJoin)
-      .where(and(
-        eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId), inArray(ynabTransactions.payeeId, part),
-        eq(ynabTransactions.deleted, false), eq(ynabTransactions.approved, true), eq(ynabTransactions.isSplit, false),
-        sql`${ynabCategoryGroups.name} <> ${INTERNAL_GROUP_NAME}`,
-      ))
-      .groupBy(ynabTransactions.payeeId, ynabTransactions.categoryId)
-      .all();
-    for (const r of rows) {
-      if (!r.payeeId || !r.categoryId) continue;
-      const list = out.get(r.payeeId) ?? [];
-      list.push({ categoryId: r.categoryId, count: Number(r.n) });
-      out.set(r.payeeId, list);
-    }
-  }
-  for (const list of out.values()) list.sort((a, b) => b.count - a.count || a.categoryId.localeCompare(b.categoryId));
-  return out;
-}
-
 const SIMILAR_PAYEE = 0.8;
 const SCAN_LIMIT = 500;
 const txnNames = (t: { payeeName: string | null; importPayeeName: string | null; importPayeeNameOriginal: string | null }) =>
@@ -284,34 +255,6 @@ export async function lastAccountForPayee(db: DB, userId: string, planId: string
     .limit(SCAN_LIMIT)
     .all();
   for (const r of rows) if (payeeSimilarity(payee, txnNames(r)) >= SIMILAR_PAYEE) return r.accountId;
-  return null;
-}
-
-/** Category of the most recent matched (or approved, categorized) outflow at a similar payee (≥ 0.8). For inflow suggestions (§9.5). */
-export async function lastOutflowCategoryForPayee(db: DB, userId: string, planId: string, payeeNames: (string | null)[]): Promise<string | null> {
-  const names = payeeNames.filter((n): n is string => n !== null && n.trim() !== "");
-  if (names.length === 0) return null;
-  const matched = db.select({ id: matches.ynabTxnId }).from(matches).where(and(eq(matches.userId, userId), eq(matches.state, "applied")));
-  const rows = await db.select({
-    categoryId: ynabTransactions.categoryId, payeeName: ynabTransactions.payeeName,
-    importPayeeName: ynabTransactions.importPayeeName, importPayeeNameOriginal: ynabTransactions.importPayeeNameOriginal,
-  })
-    .from(ynabTransactions)
-    .innerJoin(ynabCategories, and(eq(ynabCategories.userId, ynabTransactions.userId), eq(ynabCategories.id, ynabTransactions.categoryId)))
-    .innerJoin(ynabCategoryGroups, groupJoin)
-    .where(and(
-      eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId), eq(ynabTransactions.deleted, false),
-      lt(ynabTransactions.amount, 0), eq(ynabTransactions.isSplit, false), isNull(ynabTransactions.transferAccountId),
-      sql`(${ynabTransactions.approved} = 1 OR ${ynabTransactions.id} IN ${matched})`,
-      selectableCond(),
-    ))
-    .orderBy(desc(ynabTransactions.date), desc(ynabTransactions.updatedAt))
-    .limit(SCAN_LIMIT)
-    .all();
-  for (const r of rows) {
-    const theirs = txnNames(r);
-    if (names.some((n) => payeeSimilarity(n, theirs) >= SIMILAR_PAYEE)) return r.categoryId;
-  }
   return null;
 }
 

@@ -160,8 +160,7 @@ export function OnboardingPage() {
               </p>
               <ul className="list-disc pl-5 text-muted-foreground">
                 <li>the text you type or dictate,</li>
-                <li>your YNAB category and payee names,</li>
-                <li>payee, amount, date and memo of uncategorized imports (inbox suggestions).</li>
+                <li>your YNAB category, account and payee names.</li>
               </ul>
               <p className="text-muted-foreground">You can turn this off in Settings at any time.</p>
             </div>

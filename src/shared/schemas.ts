@@ -32,14 +32,13 @@ export const SettingsShape = z.object({
   maxTaxRate: z.number().min(0).max(0.25),
   flagColor: FlagColor.nullable(),              // flag put on transactions we touch
   voiceMode: VoiceMode,                         // 'server' only honoured if admin allowed
-  backgroundInboxSuggestions: z.boolean(),
   aiDataConsent: z.boolean(),                   // must be true before any Claude call
 });
 export type Settings = z.infer<typeof SettingsShape>;
 export const DEFAULT_SETTINGS: Settings = {
   planId: null, timezone: "UTC", createPlaceholders: true, defaultAccountId: null,
   autoApproveMatches: true, staleAfterDays: 14, amazonWindowDays: 21, maxTaxRate: 0.11,
-  flagColor: "purple", voiceMode: "browser", backgroundInboxSuggestions: true, aiDataConsent: false,
+  flagColor: "purple", voiceMode: "browser", aiDataConsent: false,
 };
 export const SettingsPatch = SettingsShape.partial().strict();
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
@@ -166,27 +165,12 @@ export const ReviewItem = z.object({
 });
 export type ReviewItem = z.infer<typeof ReviewItem>;
 
-// ── inbox ─────────────────────────────────────────────────────────────────
-export const InboxSuggestion = z.object({
-  categoryId: Id.nullable(), confidence: Confidence, reason: z.string(),
-  source: z.enum(["claude", "ynab_existing", "history"]),
-});
-export const PossibleIntent = z.object({ intentId: Id, payee: z.string(), totalAmount: Milli, date: IsoDate });
-export const InboxItem = z.object({
-  transaction: TxnView,
-  suggestion: InboxSuggestion.nullable(),
-  possibleIntent: PossibleIntent.nullable(),    // open intent with a loose candidate score (§9.5): UI offers "Link" first
-});
-export type InboxItem = z.infer<typeof InboxItem>;
-export type InboxSuggestion = z.infer<typeof InboxSuggestion>; // WP1 addition
-export type PossibleIntent = z.infer<typeof PossibleIntent>; // WP1 addition: used by §8.5
-
 // ── activity / audit ──────────────────────────────────────────────────────
 export const AuditAction = z.enum([
   "login", "logout", "settings_changed", "secret_changed", "admin_change",
   "intent_created", "intent_updated", "intent_extended", "intent_cancelled", "intent_resolved", "intent_kept_final",
   "placeholder_created", "placeholder_updated", "placeholder_deleted", "placeholder_delete_refused", "final_entry_created",
-  "txn_categorized", "txn_split", "txn_approved", "inbox_approved",
+  "txn_categorized", "txn_split", "txn_approved",
   "review_created", "review_resolved", "review_dismissed",
 ]);
 export type AuditAction = z.infer<typeof AuditAction>;
@@ -208,7 +192,7 @@ export const Me = z.object({
   needsReauth: z.boolean(), sttAllowed: z.boolean(), hasAnthropicKey: z.boolean(),
   oauthAvailable: z.boolean(), settings: SettingsShape,
   plan: z.object({ id: Id, name: z.string(), currency: CurrencyFormat }).nullable(),
-  counts: z.object({ pending: z.int(), stale: z.int(), review: z.int(), inbox: z.int() }),
+  counts: z.object({ pending: z.int(), stale: z.int(), review: z.int() }),
   lastSyncError: z.string().nullable(),         // sync_state.last_error, e.g. "ynab_subscription_lapsed: …"
   lastSyncAt: z.int().nullable(),               // sync_state.last_cycle_at (epoch ms), shown as "Last synced …"
 });
@@ -222,7 +206,7 @@ export const SyncResult = z.object({
   ranAt: z.int(),
   skipped: z.enum(["throttled", "locked", "rate_limited", "no_plan", "reauth", "not_allowed", "error"]).nullable(),
   changedTransactions: z.int(), matched: z.int(), reviewsCreated: z.int(),
-  stale: z.int(), inboxSuggested: z.int(),
+  stale: z.int(),
   errors: z.array(z.object({ code: z.string(), message: z.string() })),  // ErrorCode values + per-decision engine errors
 });
 export type SyncResult = z.infer<typeof SyncResult>;

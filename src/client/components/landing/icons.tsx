@@ -34,14 +34,6 @@ export function Check(props: IconProps) {
   );
 }
 
-export function Sparkle(props: IconProps) {
-  return (
-    <svg {...stroke} fill="currentColor" stroke="none" {...props}>
-      <path d="M11 3l1.8 5.2L18 10l-5.2 1.8L11 17l-1.8-5.2L4 10l5.2-1.8zM18.5 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" />
-    </svg>
-  );
-}
-
 export function Clock(props: IconProps) {
   return (
     <svg {...stroke} {...props}>

@@ -5,7 +5,6 @@ import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { todayIn } from "../../shared/dates";
 import type { ErrorCode } from "../../shared/api";
 import type { SyncResult } from "../../shared/schemas";
-import { suggestInboxCategories } from "../ai/inbox";
 import { getSettings } from "../auth/settings";
 import { getUser, isAllowed } from "../auth/users";
 import { getDb } from "../db/client";
@@ -24,13 +23,12 @@ export const LOCK_POLL_MS = 250;
 export const MANUAL_THROTTLE_MS = 60_000;
 export const CRON_THROTTLE_MS = 30 * 60_000;
 export const CRON_MAX_USERS = 50;
-const CRON_INBOX_MAX = 24;
 
 type Skipped = SyncResult["skipped"];
 type CycleError = SyncResult["errors"][number];
 
 const emptyResult = (ranAt: number, skipped: Skipped = null, errors: CycleError[] = []): SyncResult => ({
-  ranAt, skipped, changedTransactions: 0, matched: 0, reviewsCreated: 0, stale: 0, inboxSuggested: 0, errors,
+  ranAt, skipped, changedTransactions: 0, matched: 0, reviewsCreated: 0, stale: 0, errors,
 });
 
 function toCycleError(e: unknown): CycleError {
@@ -106,14 +104,6 @@ export async function runUserCycle(env: Env, userId: string, trigger: CycleTrigg
       result.reviewsCreated = summary.reviewsCreated;
       result.stale = summary.stale;
       for (const message of summary.errors) result.errors.push({ code: "engine", message });
-      if (trigger === "cron" && settings.backgroundInboxSuggestions) {
-        try {
-          result.inboxSuggested = await suggestInboxCategories({ env, db, userId, planId, settings }, { max: CRON_INBOX_MAX, effort: "medium" });
-        } catch (e) {
-          // Suggestions are optional: report, but the cycle itself succeeded.
-          result.errors.push(toCycleError(e));
-        }
-      }
       return "done" as const;
     });
   } catch (e) {

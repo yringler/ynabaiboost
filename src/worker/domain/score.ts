@@ -10,10 +10,9 @@ export const MARGIN = 0.1;
 export const REVIEW_MIN = 0.6;
 /** Cap for candidates that must never auto-apply (payee mismatch, already-approved import). */
 export const REVIEW_CAP = 0.79;
-/** Loose (manual link / possible intent) thresholds, §10.9. */
+/** Loose (manual link) thresholds, §10.9. */
 export const LOOSE_PAYEE_MIN = 0.5;
 export const LOOSE_AMOUNT_FACTOR = 3;
-export const POSSIBLE_MIN = 0.5;
 
 export const openLines = (i: { lines: DLine[] }): DLine[] => i.lines.filter((l) => l.status === "open");
 export const txnNames = (t: DTxn): (string | null)[] => [t.payeeName, t.importPayeeNameOriginal, t.importPayeeName];
@@ -86,7 +85,7 @@ export function scoreCandidate(i: DIntent, t: DTxn, input: ReconcileInput): numb
   return scoreDetail(i, t, input)?.score ?? null;
 }
 
-/** §10.9 loose filter for manual linking and `possibleIntentFor`: an import, not split/deleted/transfer,
+/** §10.9 loose filter for manual linking: an import, not split/deleted/transfer,
  *  right sign, not excluded, and payeeSim ≥ 0.5 or the amount within 3 × tolerance. Returns the §10.5 score
  *  computed without thresholds, or null. (The 45-day age limit is applied by the caller.) */
 export function looseScore(i: DIntent, t: DTxn, excluded: Set<string>, amazonWindowDays: number): number | null {

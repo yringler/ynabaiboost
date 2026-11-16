@@ -13,7 +13,7 @@ export interface AuditInput {
   intentId?: string | null;
   ynabTxnId?: string | null;
   before?: TxnSnapshot | null;
-  after?: TxnSnapshot | null; // required for txn_* and inbox_approved rows
+  after?: TxnSnapshot | null; // required for txn_* rows
 }
 
 export function toSnapshot(t: {
@@ -33,7 +33,7 @@ export function toSnapshot(t: {
   };
 }
 
-const TXN_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>(["txn_categorized", "txn_split", "txn_approved", "inbox_approved"]);
+const TXN_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>(["txn_categorized", "txn_split", "txn_approved"]);
 
 /** Returns an un-awaited Drizzle insert so callers can put it in db.batch([...]). */
 export function auditStmt(db: DB, e: AuditInput, now: number = Date.now()): BatchItem<"sqlite"> {

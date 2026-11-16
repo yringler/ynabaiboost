@@ -154,7 +154,6 @@ export const ynabTransactions = sqliteTable(
     primaryKey({ columns: [t.userId, t.id] }),
     index("ynab_txn_plan_date").on(t.userId, t.planId, t.date),
     index("ynab_txn_matched").on(t.userId, t.matchedTransactionId),
-    index("ynab_txn_inbox").on(t.userId, t.planId, t.approved, t.deleted),
   ],
 );
 
@@ -212,7 +211,7 @@ export const intentLines = sqliteTable(
   (t) => [unique().on(t.intentId, t.idx)],
 );
 
-// ── matching / review / inbox / audit ──────────────────────────────────────
+// ── matching / review / audit ──────────────────────────────────────────────
 export const matches = sqliteTable(
   "matches",
   {
@@ -259,21 +258,6 @@ export const reviews = sqliteTable(
       .on(t.userId, t.ynabTxnId)
       .where(sql`status = 'open' AND intent_id IS NULL`),
   ],
-);
-
-export const inboxSuggestions = sqliteTable(
-  "inbox_suggestions",
-  {
-    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    ynabTxnId: text("ynab_txn_id").notNull(),
-    categoryId: text("category_id"),
-    confidence: text("confidence", { enum: ["high", "medium", "low"] }).notNull(),
-    reason: text("reason").notNull(),
-    source: text("source", { enum: ["claude", "ynab_existing", "history"] }).notNull(),
-    status: text("status", { enum: ["suggested", "applied", "dismissed"] }).notNull().default("suggested"),
-    createdAt: integer("created_at").notNull(),
-  },
-  (t) => [primaryKey({ columns: [t.userId, t.ynabTxnId] })],
 );
 
 export const auditLog = sqliteTable(

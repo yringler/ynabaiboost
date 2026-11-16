@@ -64,11 +64,6 @@ steps change layout at 720px or wider.
 - H2: **One order, three charges.**
 - Line: *Say what's in the box. It's split across every charge.*
 
-**Inbox**: H2 plus one line and a static mini row (bank payee, amount, a sparkle chip
-"Household", and a ✓ button).
-- H2: **Imports you haven't touched?**
-- Line: *Claude suggests a category. One tap to approve.*
-
 **Your data**: H2 plus two short lines.
 - H2: **Your keys, your budget.**
 - *Connect with YNAB or a personal access token. Tokens are encrypted, and your Anthropic key
@@ -110,7 +105,7 @@ small **Replay** text button sits under the panel, outside the `role="img"` elem
 
 ### 3.2 How to build it (pure CSS, no dependency)
 
-- Markup: plain `div`/`span`, with inline SVG only for the mic, the check, and the sparkle (each
+- Markup: plain `div`/`span`, with inline SVG only for the mic and the check (each
   under 300 bytes). No images, fonts, Lottie, or motion library. If `motion` is ever wanted,
   it is only worth it for a later shared-layout morph; it is not needed here.
 - **The base style is the final (rested) state.** Each keyframe defines only `from`, as the
@@ -221,8 +216,7 @@ up."), and OG tags in `index.html`. Prerendering is optional later.
 - No autoplaying sound, no loops, nothing flashes more than 3 times a second, and the run is
   under 5 s. Reduced motion is honoured (§3.3).
 - Visible `:focus-visible` ring (`2px solid var(--accent)`, offset 3px). Contrast is AA in both
-  themes (§4). The ✓ in the inbox row is decorative (`aria-hidden`), and its meaning is in the
-  text.
+  themes (§4).
 - Mark up the copy's quotes as `<q>` and the money as text, so screen readers read "$212.47".
 
 ## 8. Files to implement
@@ -235,9 +229,8 @@ src/client/components/landing/Hero.tsx            H1, lede, CTAs, note, <StoryDe
 src/client/components/landing/StoryDemo.tsx       §3.1–3.3; run/key replay, useInView start
 src/client/components/landing/SplitDemo.tsx       §3.4
 src/client/components/landing/Steps.tsx           "How it works" ol
-src/client/components/landing/InboxPeek.tsx       static suggestion row
 src/client/components/landing/ConnectButton.tsx   authConfig + me aware href/label (§6)
-src/client/components/landing/icons.tsx           Mic, Check, Sparkle inline SVGs
+src/client/components/landing/icons.tsx           Mic, Check, Clock, Replay inline SVGs
 src/client/hooks/useInView.ts                     IntersectionObserver, once
 src/client/router.tsx                             (edit) add /welcome, 401 on / → /welcome
 src/client/routes/login.tsx                       (edit) honour ?pat=1

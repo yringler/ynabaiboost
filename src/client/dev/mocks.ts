@@ -9,7 +9,7 @@ import { API, type ApiKey, type ErrorCode, ERROR_STATUS } from "../../shared/api
 import { addDays, todayIn } from "../../shared/dates";
 import { normalizePayee } from "../../shared/payee";
 import {
-  DEFAULT_SETTINGS, SettingsPatch, type ActivityEntry, type Category, type InboxItem, type Intent, type IntentCreate,
+  DEFAULT_SETTINGS, SettingsPatch, type ActivityEntry, type Category, type Intent, type IntentCreate,
   type IntentDraft, type Me, type ReviewItem, type Settings, type TxnView,
 } from "../../shared/schemas";
 
@@ -81,11 +81,12 @@ let reviews: ReviewItem[] = [{
   transactions: [txn("t-amz1", "AMZN Mktp US*2K4L", -37_100, addDays(today, -1))],
   intents: [],
 }];
-let inbox: InboxItem[] = [
-  { transaction: txn("t-1", "STARBUCKS #1234", -6_450, today), suggestion: { categoryId: "c-dine", confidence: "high", reason: "Coffee shop", source: "claude" }, possibleIntent: null },
-  { transaction: txn("t-2", "SHELL OIL 5739", -48_200, addDays(today, -1)), suggestion: { categoryId: "c-gas", confidence: "medium", reason: "Fuel station", source: "history" }, possibleIntent: null },
-  { transaction: txn("t-3", "COSTCO WHSE #0412", -212_470, addDays(today, -1)), suggestion: null, possibleIntent: { intentId: "i-costco", payee: "Costco", totalAmount: 200_000, date: today } },
-  { transaction: txn("t-4", "SQ *FARMERS MKT", -18_000, addDays(today, -2)), suggestion: null, possibleIntent: null },
+/** Unmatched bank imports: the pool "Link manually" offers as candidates. */
+let imports: TxnView[] = [
+  txn("t-1", "STARBUCKS #1234", -6_450, today),
+  txn("t-2", "SHELL OIL 5739", -48_200, addDays(today, -1)),
+  txn("t-3", "COSTCO WHSE #0412", -212_470, addDays(today, -1)),
+  txn("t-4", "SQ *FARMERS MKT", -18_000, addDays(today, -2)),
 ];
 const activity: ActivityEntry[] = Array.from({ length: 70 }, (_, i) => ({
   id: `act-${i}`, at: now - i * 5 * HOUR, actor: (["user", "cron", "app"] as const)[i % 3] ?? "app",
@@ -101,7 +102,7 @@ const me = (): Me => ({
   plan: settings.planId ? { id: settings.planId, name: "Household budget", currency: { isoCode: "USD", decimalDigits: 2 } } : null,
   counts: {
     pending: intents.filter((i) => ["pending", "partial", "review"].includes(i.status)).length,
-    stale: intents.filter((i) => i.isStale).length, review: reviews.length, inbox: inbox.length,
+    stale: intents.filter((i) => i.isStale).length, review: reviews.length,
   },
   lastSyncError: null, lastSyncAt,
 });
@@ -198,7 +199,7 @@ const handlers = [
   http.post(url("sync"), async () => {
     await delay(800);
     lastSyncAt = Date.now();
-    return ok("sync", { ranAt: lastSyncAt, skipped: null, changedTransactions: 3, matched: 0, reviewsCreated: 0, stale: 1, inboxSuggested: 0, errors: [] });
+    return ok("sync", { ranAt: lastSyncAt, skipped: null, changedTransactions: 3, matched: 0, reviewsCreated: 0, stale: 1, errors: [] });
   }),
   http.post(url("parse"), async ({ request }) => {
     await delay(900);
@@ -223,7 +224,7 @@ const handlers = [
         : intents.filter((i) => i.status === status);
     return ok("listIntents", { intents: list });
   }),
-  http.get(url("candidates"), () => ok("candidates", { transactions: inbox.map((i) => i.transaction).slice(0, 3) })),
+  http.get(url("candidates"), () => ok("candidates", { transactions: imports.slice(0, 3) })),
   http.get(url("getIntent"), ({ params }) => {
     const i = findIntent(params.id);
     return i ? ok("getIntent", { intent: i }) : fail("not_found", "No such intent");
@@ -258,7 +259,7 @@ const handlers = [
     i.status = "resolved";
     i.isStale = false;
     i.matchedTransactionIds = [transactionId];
-    inbox = inbox.filter((x) => x.transaction.id !== transactionId);
+    imports = imports.filter((t) => t.id !== transactionId);
     return ok("linkIntent", { intent: i });
   }),
   http.get(url("listReviews"), () => ok("listReviews", { reviews })),
@@ -268,24 +269,6 @@ const handlers = [
     const i = findIntent(r?.intentId ?? undefined);
     if (i) i.status = "partial";
     return ok("resolveReview", { ok: true });
-  }),
-  http.get(url("inbox"), () => ok("inbox", { items: inbox, lastSyncAt })),
-  http.post(url("inboxSuggest"), async () => {
-    await delay(1200);
-    let n = 0;
-    inbox = inbox.map((i) => (i.suggestion ? i : (n++, { ...i, suggestion: { categoryId: "c-groc", confidence: "low", reason: "Market", source: "claude" } })));
-    return ok("inboxSuggest", { suggested: n });
-  }),
-  http.post(url("inboxApprove"), async ({ request }) => {
-    const { items } = (await request.json()) as { items: { transactionId: string }[] };
-    const ids = new Set(items.map((i) => i.transactionId));
-    inbox = inbox.filter((i) => !ids.has(i.transaction.id));
-    return ok("inboxApprove", { approved: ids.size, failed: [] });
-  }),
-  http.post(url("inboxDismiss"), async ({ request }) => {
-    const { transactionIds } = (await request.json()) as { transactionIds: string[] };
-    inbox = inbox.filter((i) => !transactionIds.includes(i.transaction.id));
-    return ok("inboxDismiss", { ok: true });
   }),
   http.post(url("stt"), async () => {
     await delay(700);

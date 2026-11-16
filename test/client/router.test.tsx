@@ -13,7 +13,7 @@ const meFixture = (over: Partial<Me> = {}): Me => ({
   userId: "u-1", isAdmin: false, authType: "pat", needsReauth: false, sttAllowed: false, hasAnthropicKey: true,
   oauthAvailable: false, settings: { ...DEFAULT_SETTINGS, planId: "p1", aiDataConsent: true },
   plan: { id: "p1", name: "Plan", currency: { isoCode: "USD", decimalDigits: 2 } },
-  counts: { pending: 0, stale: 0, review: 0, inbox: 0 }, lastSyncError: null, lastSyncAt: null, ...over,
+  counts: { pending: 0, stale: 0, review: 0 }, lastSyncError: null, lastSyncAt: null, ...over,
 });
 
 function setup(path: string, meResponse: () => Response) {
@@ -50,9 +50,9 @@ describe("route guards", () => {
   });
 
   it("sends a logged-out deep link to /login with a redirect back", async () => {
-    const { router } = setup("/inbox", unauth);
+    const { router } = setup("/pending", unauth);
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
-    expect(router.state.location.search).toMatchObject({ redirect: "/inbox" });
+    expect(router.state.location.search).toMatchObject({ redirect: "/pending" });
   });
 
   it("sends a not-allowed user to /login?error=not_allowed with their id", async () => {
@@ -83,10 +83,6 @@ describe("route guards", () => {
 });
 
 describe("screens render against contract-shaped data", () => {
-  const txn = {
-    id: "t1", date: "2026-11-15", amount: -6450, payeeName: null, importPayeeName: "STARBUCKS", accountId: "a1", accountName: "Visa",
-    categoryId: null, memo: null, approved: false, cleared: "cleared", isSplit: false, isTransfer: false, isImported: true,
-  };
   const routes: Record<string, unknown> = {
     "/api/catalog": {
       planId: "p1", currency: { isoCode: "USD", decimalDigits: 2 },
@@ -94,7 +90,6 @@ describe("screens render against contract-shaped data", () => {
       accounts: [{ id: "a1", name: "Visa", type: "creditCard", onBudget: true, closed: false, directImportLinked: true }],
       payees: [], recentCategoryIds: ["c1"],
     },
-    "/api/inbox": { items: [{ transaction: txn, suggestion: { categoryId: "c1", confidence: "high", reason: "Coffee", source: "claude" }, possibleIntent: null }], lastSyncAt: null },
     "/api/reviews": { reviews: [] },
     "/api/intents": { intents: [] },
     "/api/activity": { entries: [{ id: "e1", at: 1_700_000_000_000, actor: "cron", action: "txn_approved", summary: "Approved Starbucks", intentId: null, transactionId: "t1" }], nextCursor: null },
@@ -111,11 +106,6 @@ describe("screens render against contract-shaped data", () => {
     render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>);
   }
 
-  it("inbox shows the row and the bulk approve button", async () => {
-    setupWithData("/inbox");
-    await screen.findByText("STARBUCKS");
-    expect(screen.getByRole("button", { name: /Approve all high-confidence \(1\)/ })).toBeTruthy();
-  });
   it("pending shows empty tabs", async () => {
     setupWithData("/pending");
     await screen.findByText("No purchases waiting for the bank.");

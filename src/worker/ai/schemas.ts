@@ -25,11 +25,3 @@ export const ParsedUtterance = z.object({
   transactions: z.array(ParsedTransaction),
 });
 
-export const InboxOut = z.object({
-  suggestions: z.array(z.object({
-    txn_ref: z.string(),
-    category_ref: z.string().nullable(),
-    confidence: z.enum(["high", "medium", "low"]),
-    reason: z.string().describe("≤ 12 words"),
-  })),
-});

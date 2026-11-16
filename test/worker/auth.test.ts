@@ -35,10 +35,6 @@ vi.mock("../../src/worker/engine/reconcile", async (orig) => ({
   ...(await orig<typeof import("../../src/worker/engine/reconcile")>()),
   countOpen: async () => ({ pending: 2, stale: 1, review: 0 }),
 }));
-vi.mock("../../src/worker/ai/inbox", async (orig) => ({
-  ...(await orig<typeof import("../../src/worker/ai/inbox")>()),
-  countInbox: async () => 3,
-}));
 
 const network = setupNetwork();
 let YnabApiError: typeof YnabApiErrorT;

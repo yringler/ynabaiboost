@@ -2,7 +2,6 @@
 import { and, eq } from "drizzle-orm";
 import { todayIn } from "../../shared/dates";
 import { Me } from "../../shared/schemas";
-import { countInbox } from "../ai/inbox";
 import { syncState } from "../db/schema";
 import { countOpen } from "../engine/reconcile";
 import type { DB, UserRow } from "../env";
@@ -37,7 +36,7 @@ export async function buildMe(env: Env, db: DB, user: UserRow): Promise<Me> {
   let plan: Me["plan"] = null;
   let lastSyncError: string | null = null;
   let lastSyncAt: number | null = null;
-  let counts: Me["counts"] = { pending: 0, stale: 0, review: 0, inbox: 0 };
+  let counts: Me["counts"] = { pending: 0, stale: 0, review: 0 };
 
   if (planId !== null) {
     const st = await db.select().from(syncState).where(and(eq(syncState.userId, userId), eq(syncState.planId, planId))).get();
@@ -50,11 +49,7 @@ export async function buildMe(env: Env, db: DB, user: UserRow): Promise<Me> {
     lastSyncError = st?.lastError ?? null;
     lastSyncAt = st?.lastCycleAt ?? null;
     const today = safeToday(settings.timezone);
-    const [open, inbox] = await Promise.all([
-      safeCount("open", userId, () => countOpen(db, userId, planId, today), { pending: 0, stale: 0, review: 0 }),
-      safeCount("inbox", userId, () => countInbox(db, userId, planId), 0),
-    ]);
-    counts = { pending: open.pending, stale: open.stale, review: open.review, inbox };
+    counts = await safeCount("open", userId, () => countOpen(db, userId, planId, today), { pending: 0, stale: 0, review: 0 });
   }
 
   return Me.parse({

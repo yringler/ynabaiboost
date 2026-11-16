@@ -11,8 +11,8 @@ import { getSettings, updateSettings } from "../../src/worker/auth/settings";
 import { auditLog, syncState, userSettings } from "../../src/worker/db/schema";
 import { call, db, envWith, loadFreshApp, seedSession, seedUser, uid } from "./wp2-helpers";
 
-// WP4/WP5 count functions may still be stubs: fake them for /api/me.
-const counts = vi.hoisted(() => ({ open: { pending: 4, stale: 1, review: 2 }, inbox: 7, fail: false, args: [] as unknown[][] }));
+// Fake the open-intent counts for /api/me.
+const counts = vi.hoisted(() => ({ open: { pending: 4, stale: 1, review: 2 }, fail: false, args: [] as unknown[][] }));
 vi.mock("../../src/worker/engine/reconcile", async (orig) => ({
   ...(await orig<typeof import("../../src/worker/engine/reconcile")>()),
   countOpen: async (...a: unknown[]) => {
@@ -20,10 +20,6 @@ vi.mock("../../src/worker/engine/reconcile", async (orig) => ({
     if (counts.fail) throw new Error("boom");
     return counts.open;
   },
-}));
-vi.mock("../../src/worker/ai/inbox", async (orig) => ({
-  ...(await orig<typeof import("../../src/worker/ai/inbox")>()),
-  countInbox: async () => counts.inbox,
 }));
 
 const network = setupNetwork();
@@ -129,7 +125,7 @@ describe("GET /api/me", () => {
       oauthAvailable: false,
       settings: { ...DEFAULT_SETTINGS, planId: "plan-1", timezone: "UTC" },
       plan: { id: "plan-1", name: "Home", currency: { isoCode: "EUR", decimalDigits: 2 } },
-      counts: { pending: 4, stale: 1, review: 2, inbox: 7 },
+      counts: { pending: 4, stale: 1, review: 2 },
       lastSyncError: "ynab_subscription_lapsed: ended",
       lastSyncAt: 1_700_000_000_000,
     });
@@ -141,14 +137,14 @@ describe("GET /api/me", () => {
   it("no plan → plan null and zero counts; failing counts never break /api/me", async () => {
     const { u, cookie } = await loggedIn();
     const r1 = await call(e, "GET", "/api/me", { cookie });
-    expect(await r1.json()).toMatchObject({ plan: null, counts: { pending: 0, stale: 0, review: 0, inbox: 0 }, lastSyncAt: null });
+    expect(await r1.json()).toMatchObject({ plan: null, counts: { pending: 0, stale: 0, review: 0 }, lastSyncAt: null });
     await updateSettings(db(), u, { planId: "plan-x" });
     counts.fail = true;
     const r2 = await call(e, "GET", "/api/me", { cookie });
     expect(r2.status).toBe(200);
     expect(await r2.json()).toMatchObject({
       plan: { id: "plan-x", name: "", currency: { isoCode: "USD", decimalDigits: 2 } },
-      counts: { pending: 0, stale: 0, review: 0, inbox: 7 },
+      counts: { pending: 0, stale: 0, review: 0 },
     });
     counts.fail = false;
   });

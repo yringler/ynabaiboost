@@ -36,7 +36,7 @@ starting a package. §6–§8 contracts are unchanged except for the additive ty
 
 - `money.ts`, `dates.ts`, `schemas.ts`, `api.ts` are §6 verbatim.
 - **Additive type aliases only** in `schemas.ts` (same names as the zod consts, no runtime change):
-  `FlagColor`, `IntentStatus`, `PlaceholderStatus`, `ReviewKind`, `InboxSuggestion`, `PossibleIntent`, `AdminUser`.
+  `FlagColor`, `IntentStatus`, `PlaceholderStatus`, `ReviewKind`, `AdminUser`.
   §8.3 (`FlagColor | null`) and §10.1 (`PlaceholderStatus`, `ReviewKind`) use these names as types, so the text now compiles as written.
 - `payee.ts` implements §10.4:
   - Processor prefixes are stripped repeatedly ("pos debit …").
@@ -74,12 +74,12 @@ New test files must live in one of those directories or typecheck will not see t
 ## 6. Worker core (WP1-owned, for consumers)
 
 - **`index.ts`** is §4 plus: `app.notFound` → 404 `not_found` ApiErrorBody; the Hono `app` is also a named export.
-  Mounting: `authRoutes` at `/auth`; `accountRoutes, syncRoutes, parseRoutes, inboxRoutes, sttRoutes, intentRoutes, reviewRoutes, activityRoutes` at `/api` (so define paths like `/me`, `/sync`, `/intents/:id` inside your router); `adminRoutes` at `/api/admin` (define `/users`, `/users/:id`, and apply `requireAdmin` yourself). `parseRoutes` is mounted before `intentRoutes`, so `/api/intents/parse` wins over `/api/intents/:id`.
+  Mounting: `authRoutes` at `/auth`; `accountRoutes, syncRoutes, parseRoutes, sttRoutes, intentRoutes, reviewRoutes, activityRoutes` at `/api` (so define paths like `/me`, `/sync`, `/intents/:id` inside your router); `adminRoutes` at `/api/admin` (define `/users`, `/users/:id`, and apply `requireAdmin` yourself). `parseRoutes` is mounted before `intentRoutes`, so `/api/intents/parse` wins over `/api/intents/:id`.
 - **`hono/csrf` (4.13) also inspects `Sec-Fetch-Site`**: a cross-site non-GET request is refused by csrf (403, message `forbidden`) before originGuard runs. Both produce ApiErrorBody `forbidden` because:
 - **`errorHandler`** maps `AppError` → its code; `ZodError` → `validation` 400; **`HTTPException`** (csrf, `bodyLimit`, Hono validator content-type errors) → code by status (400 validation, 401, 403 forbidden, 404, 409, 413 payload_too_large, 415 unsupported_media, 429 rate_limited, 5xx internal); anything else → `internal` 500, logged without request data.
 - **`lib/validate.ts` (additive helper):** `validate(target, schema)` wraps `zValidator` so a failed parse throws `AppError("validation")` → ApiErrorBody. Raw `zValidator` returns its own zod-error JSON on 400, which is **not** `ApiErrorBody`; prefer `validate("json", Req)` / `validate("query", API.x.query)`. For target `json`, `validate` also rejects a non-JSON `Content-Type` with 400 `validation` (Hono 4.13 would otherwise parse it as `{}`, which all-optional schemas accept; fixed at integration, see §10).
 - **`db/schema.ts`**: columns mirror §5 one to one (parity test: `test/worker/schema-parity.test.ts`). INTEGER 0/1 columns use Drizzle `{ mode: "boolean" }`, so `UserRow.sttAllowed`, `ynabTransactions.approved`, etc. are `boolean`. Enum TEXT columns carry their unions; `audit_log.action` is typed `AuditAction`. JSON columns (`user_settings.json`, `matches.line_ids/allocation`, `reviews.options`, `audit_log.before_json/after_json`) are plain `text`: parse with the shared zod schemas. Partial unique indexes are declared too.
-- **`lib/audit.ts`**: `auditStmt` throws if a `txn_categorized | txn_split | txn_approved | inbox_approved` row lacks `before`/`after`. `toSnapshot` drops unknown flag colours to `null`.
+- **`lib/audit.ts`**: `auditStmt` throws if a `txn_categorized | txn_split | txn_approved` row lacks `before`/`after`. `toSnapshot` drops unknown flag colours to `null`.
 - **`lib/ids.ts`**: `newShortRef()` is 6 chars of Crockford base32 (`0-9A-Z` minus `ILOU`).
 
 ## 7. Stubs (historical — all filled by WP2–WP6; `grep -rn "not implemented" src` is empty)
@@ -90,7 +90,7 @@ New test files must live in one of those directories or typecheck will not see t
 - No frozen exports, so the file is `export {}` until its owner fills it: `auth/oauth.ts` (WP2), `ai/prompts.ts` (WP4).
 - `domain/{tolerance,dates,score,subsets,allocate,memo}.ts` have stub signatures guessed from §10 pseudo-code. They are **WP5-internal and not frozen**; WP5 may change them freely.
 - **Client** (WP6 owns everything; all placeholders):
-  - Each `routes/*.tsx` exports `<Name>Page` (`LoginPage`, `OnboardingPage`, `CapturePage`, `PendingPage`, `InboxPage`, `ActivityPage`, `SettingsPage`, `AdminPage`, `PrivacyPage`, `WelcomePage`). Each component file exports a component with the file's name. `landing/icons.tsx` exports `Mic`, `Check`, `Sparkle`.
+  - Each `routes/*.tsx` exports `<Name>Page` (`LoginPage`, `OnboardingPage`, `CapturePage`, `PendingPage`, `ActivityPage`, `SettingsPage`, `AdminPage`, `PrivacyPage`, `WelcomePage`). Each component file exports a component with the file's name. `landing/icons.tsx` exports `Mic`, `Check`, `Clock`, `Replay`.
   - `router.tsx` registers all routes including `/welcome`, with **no guards yet** (WP6 adds: logged-out `/` → `/welcome`, other 401 → `/login`, 403 `not_allowed` → `/login?error=not_allowed`, onboarding redirects).
   - `lib/api.ts` has the typed signature: `call<K extends ApiKey>(key, { params, query, body, signal })` → `Promise<ResOf<K>>`, plus `ApiError(status, code, message)`.
   - `hooks/useSync.ts` documents the owner decision: POST `/api/sync` only from "Sync now" / pull-to-refresh, never on mount or focus.
@@ -144,11 +144,6 @@ Resolutions of every contract issue the packages reported. No frozen §6–§8 s
 - **`callStructured`** uses `client.beta.messages.create` with `output_config.format` (`betaZodOutputFormat`) and
   validates locally, so a `refusal` / `max_tokens` stop is checked before parsing. It sends the
   `server-side-fallback-2026-07-01` beta with `fallbacks: "default"`.
-- **`suggestInboxCategories`** returns 0 silently without consent/key and throws other AI errors; `runUserCycle`
-  catches them into `SyncResult.errors` and still counts the cycle as successful.
-- **Inbox:** split parents and transfers are never in the inbox; approve rejects them into `failed`. Approve sets
-  `settings.flagColor` only when the txn has no flag. Dismiss stamps `inbox_suggestions.created_at`; the txn comes
-  back once `ynab_transactions.updated_at` is newer.
 - **STT nova-3** receives a `ReadableStream`, not base64 (the binding types `body` as `object`). Confirm in S6.
 - **WP5 engine choices** (all §10-internal): in-place-merged YNAB auto-matches judge the payee by import names only;
   a failed placeholder delete leaves the intent open and is finished on the next `reconcileUser`; finalize reuses
@@ -184,5 +179,5 @@ Resolutions of every contract issue the packages reported. No frozen §6–§8 s
 
 ### Open items
 - Spikes S1–S6 need real YNAB/Cloudflare credentials and phones (see `docs/SPIKES.md`).
-- Swipe-to-dismiss on inbox rows and E2E checks on real phones are not done.
+- E2E checks on real phones are not done.
 - The client entry chunk is ~110 KB gzip; LANDING's "≤ 8 KB over shell" budget would need zod split off the landing path.
