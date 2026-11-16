@@ -240,14 +240,23 @@ describe("reconcile end to end (§13)", () => {
     expect((await intentRow(i.id)).status).toBe("pending");
   });
 
-  it("YNAB auto-match merged in place → ynab_auto, no write needed, placeholder kept (auto_matched)", async () => {
+  it("YNAB auto-match merged in place → ynab_auto, only the memo attribution is refreshed, placeholder kept (auto_matched)", async () => {
     const i = await withPlaceholder({ payee: "Shell", total: 47230, approximate: false, lines: [{ description: "gas", categoryId: "cat-fuel", amount: 47230 }] });
     const p = fake.txns.get(i.phId)!;
     Object.assign(p, { importId: "YNAB:-47230:2026-11-10:1", importPayeeName: "SHELL OIL 57444", cleared: "cleared" });
     await cacheTxns(userId, [p]);
     fake.calls = [];
     expect(await R.reconcileUser(ctx(), DELTA)).toMatchObject({ matched: 1, errors: [] });
-    expect(fake.calls).toHaveLength(0); // approved, categorized, tagged, flagged already
+    // Approved, categorized, tagged and flagged already: the only write swaps "placeholder" for "matched" in the memo.
+    expect(fake.calls).toHaveLength(1);
+    const u = (fake.callsOf("updateTransactions")[0]?.args[1] as Record<string, unknown>[])[0];
+    expect(Object.keys(u ?? {}).sort()).toEqual(["id", "memo"]);
+    expect(u?.memo).toMatch(/AI Boost: matched note from .* \[aib:[0-9A-Z]{6}\]$/);
+    expect(u?.memo).not.toContain("placeholder");
+    // A second cycle is a no-op: the memo is already current.
+    fake.calls = [];
+    await R.reconcileUser(ctx(), DELTA);
+    expect(fake.callsOf("updateTransactions")).toHaveLength(0);
     expect(await intentRow(i.id)).toMatchObject({ status: "resolved", placeholderStatus: "auto_matched" });
     expect((await db().select().from(matches).where(eq(matches.intentId, i.id)).get())).toMatchObject({ kind: "ynab_auto", state: "applied" });
   });

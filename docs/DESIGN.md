@@ -1871,8 +1871,9 @@ tag, what AI Boost did, so someone looking in YNAB knows why the transaction cha
 Rules: subtransaction memos keep their per-line descriptions (attribution on the parent only). Re-writing a tagged
 memo replaces only the attribution directly in front of our tag, so phrases never stack and user text (before or
 after the tag) is untouched; an old-format memo (no attribution) gets one inserted. If a replacement would exceed
-500 chars, the old attribution is removed instead. `applyMatch` does not write when the only difference is the
-attribution (YNAB merged our placeholder in place, or a retry). `updateIntent` treats the placeholder memo as
+500 chars, the old attribution is removed instead. `applyMatch` writes even when the only difference is the
+attribution, so a placeholder YNAB merged in place stops saying "placeholder" (one memo-only PATCH); a retry
+produces the identical memo and writes nothing. `updateIntent` treats the placeholder memo as
 "ours" when it equals what `createPlaceholder` wrote after `stripAttribution` on both sides, so old- and
 new-format memos are recognized; otherwise only the attribution is refreshed.
 
@@ -2434,3 +2435,4 @@ Revision 2 applies an adversarial review of revision 1 and `RESEARCH.md`. Each i
 | 37 | Owner decision: model `claude-sonnet-5-5` | — | D8, §9.1: explicit `effort: "low"`, adaptive thinking, `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`), no forced `tool_choice`, no sampling params. |
 | 38 | Owner request: conversational editing of pending intents | A | §9.6: multi-select + voice/text on Pending; `POST /api/intents/edit` (Claude → closed action union → refs resolved and validated, scope = selection) and `/apply` by a stored, expiring token with re-validation; setting `autoApplyEdits` (default off; still confirms on a question, a dropped action or more than one delete); execution through the route service functions (`services/intents.ts`); audit `intent_edit_conversational`; table `edit_plans` (migration 0002). |
 | 39 | Owner request: human-readable attribution in YNAB memos | A | §10.8: every memo the app writes carries "AI Boost: <what was done>" just before the unchanged `[aib:XXXXXX]` tag (placeholder, remaining, recorded, matched, split, needs split, kept as final, edited). Parent memo only; never stacks; user text untouched; truncation drops our descriptions, then the attribution, never the tag; old-format memos still recognized (`stripAttribution`). |
+| 40 | Owner decision: refresh attribution on YNAB-merged placeholders | A | `applyMatch` no longer skips attribution-only memo writes; a YNAB auto-matched placeholder gets one memo PATCH ("placeholder …" → "matched note from …"). Retries stay no-ops. |
