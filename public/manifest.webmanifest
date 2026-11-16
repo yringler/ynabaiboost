@@ -1,0 +1,9 @@
+{
+  "name": "AI Boost for YNAB",
+  "short_name": "AI Boost",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbfaf7",
+  "theme_color": "#c2410c",
+  "icons": []
+}

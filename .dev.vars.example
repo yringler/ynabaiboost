@@ -1,0 +1,10 @@
+# Copy to .dev.vars (gitignored) and fill in.
+# ENCRYPTION_KEY: 32 random bytes, base64 -> openssl rand -base64 32
+ENCRYPTION_KEY=
+# SESSION_SECRET: 32 random bytes, base64 -> openssl rand -base64 32
+SESSION_SECRET=
+# YNAB OAuth app secret, or the literal "disabled" when only PAT login is used
+YNAB_CLIENT_SECRET=disabled
+# Vars can be overridden locally too:
+APP_ORIGIN=http://localhost:5173
+# ADMIN_USER_IDS=<your YNAB user id>
