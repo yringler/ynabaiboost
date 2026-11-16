@@ -156,6 +156,7 @@ function createIntent(c: IntentCreate, rawText: string): Intent {
 }
 
 const findIntent = (id: string | readonly string[] | undefined) => intents.find((i) => i.id === id);
+const mockEditPlans = new Map<string, string[]>();
 
 const handlers = [
   http.get(url("authConfig"), () => ok("authConfig", { oauthAvailable: false })),
@@ -252,6 +253,31 @@ const handlers = [
     i.status = "cancelled";
     i.isStale = false;
     return ok("cancelIntent", { intent: i });
+  }),
+  // Conversational edit (§9.6), simplified: "delete" cancels the selected items; anything else is a no-op plan.
+  http.post(url("editIntents"), async ({ request }) => {
+    const { text, selectedIntentIds } = (await request.json()) as { text: string; selectedIntentIds: string[] };
+    const targets = selectedIntentIds.flatMap((id) => findIntent(id) ?? []);
+    const del = /delete|remove|cancel/i.test(text);
+    if (targets.length === 0 || !del) {
+      return ok("editIntents", { token: null, expiresAt: null, summary: "Nothing to change", lines: [], dropped: [],
+        question: "Mock API: select items and say “delete these”.", needsConfirmation: false, applied: false, results: [], warnings: [] });
+    }
+    mockEditPlans.set(`mock-token-${++seq}-xxxxxxxx`, targets.map((i) => i.id));
+    return ok("editIntents", { token: `mock-token-${seq}-xxxxxxxx`, expiresAt: Date.now() + 900_000, summary: `Delete ${targets.length}`,
+      lines: targets.map((i) => `Delete: ${i.payee}`), dropped: [], question: null, needsConfirmation: true, applied: false, results: [], warnings: [] });
+  }),
+  http.post(url("applyEdit"), async ({ request }) => {
+    const { token } = (await request.json()) as { token: string };
+    const ids = mockEditPlans.get(token);
+    if (!ids) return fail("conflict", "This edit expired or was already applied");
+    mockEditPlans.delete(token);
+    const results = ids.flatMap((id) => findIntent(id) ?? []).map((i) => {
+      i.status = "cancelled";
+      return { line: `Delete: ${i.payee}`, ok: true, error: null };
+    });
+    return ok("applyEdit", { token: null, expiresAt: null, summary: `Deleted ${results.length}`, lines: results.map((r) => r.line),
+      dropped: [], question: null, needsConfirmation: false, applied: true, results, warnings: [] });
   }),
   http.post(url("linkIntent"), async ({ params, request }) => {
     const i = findIntent(params.id);

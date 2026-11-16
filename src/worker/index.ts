@@ -12,6 +12,7 @@ import { accountRoutes } from "./routes/account";
 import { activityRoutes } from "./routes/activity";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
+import { editRoutes } from "./routes/edit";
 import { intentRoutes } from "./routes/intents";
 import { parseRoutes } from "./routes/parse";
 import { reviewRoutes } from "./routes/reviews";
@@ -33,8 +34,8 @@ app.use("*", originGuard); // D20, non-GET only
 app.route("/auth", authRoutes); // public (callback/login/logout)
 app.use("/api/*", requireSession);
 app.use("/api/*", requireAllowedUser); // id in ADMIN_USER_IDS ∪ ALLOWED_USER_IDS, else 403 not_allowed
-// parseRoutes is mounted before intentRoutes so /api/intents/parse wins over /api/intents/:id.
-for (const r of [accountRoutes, syncRoutes, parseRoutes, sttRoutes, intentRoutes, reviewRoutes, activityRoutes]) {
+// parseRoutes and editRoutes are mounted before intentRoutes so /api/intents/parse and /api/intents/edit* win over /api/intents/:id*.
+for (const r of [accountRoutes, syncRoutes, parseRoutes, editRoutes, sttRoutes, intentRoutes, reviewRoutes, activityRoutes]) {
   app.route("/api", r);
 }
 app.route("/api/admin", adminRoutes); // adminRoutes applies requireAdmin itself

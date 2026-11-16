@@ -354,6 +354,12 @@ export function SettingsPage() {
             </SelectContent>
           </Select>
         </Row>
+        <ToggleRow
+          label="Apply voice edits without confirming"
+          hint="Edits on the Pending screen apply right away. You're still asked when Claude has a question, a change was refused, or more than one item would be deleted."
+          checked={s.autoApplyEdits}
+          onChange={(autoApplyEdits) => save({ autoApplyEdits })}
+        />
       </Section>
 
       <Section title="More">

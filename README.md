@@ -13,6 +13,11 @@ It also handles:
 - **Precision check.** Claude only extracts facts; deterministic code decides whether an amount is exact (its
   digits must be in your text). The confirm screen and pending cards show "Exact — will auto-match" or
   "Approximate — may ask you". Exact amounts are matched to the cent.
+- **Edit by voice or text.** On the Pending screen, select items (or none) and say what changed: "that was
+  actually the 13th", "make it 212.47", "split off 30 for household", "delete these", "oh and I also spent 40 at
+  Target, gas". Claude proposes the changes, the app checks them and shows a plan you apply with one tap (or
+  turn on "Apply voice edits without confirming" in Settings). It only touches the items you selected and asks
+  when it isn't sure which one you mean.
 - **Reviews.** When a match is not certain, it asks you instead of guessing.
 
 It runs on one Cloudflare Worker with D1, a React SPA, Workers AI for optional server-side speech-to-text, and

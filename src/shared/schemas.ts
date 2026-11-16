@@ -34,12 +34,14 @@ export const SettingsShape = z.object({
   flagColor: FlagColor.nullable(),              // flag put on transactions we touch
   voiceMode: VoiceMode,                         // 'server' only honoured if admin allowed
   aiDataConsent: z.boolean(),                   // must be true before any Claude call
+  autoApplyEdits: z.boolean(),                  // conversational edits apply without a confirm sheet (§9.6)
 });
 export type Settings = z.infer<typeof SettingsShape>;
 export const DEFAULT_SETTINGS: Settings = {
   planId: null, timezone: "UTC", createPlaceholders: true, defaultAccountId: null,
   autoApproveMatches: true, staleAfterDays: 14, amazonWindowDays: 21, maxTaxRate: 0.11,
   flagColor: "purple", voiceMode: "browser", aiDataConsent: false,
+  autoApplyEdits: false,
 };
 export const SettingsPatch = SettingsShape.partial().strict();
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
@@ -122,6 +124,32 @@ export const IntentCreate = IntentDraft.extend({
 });
 export type IntentCreate = z.infer<typeof IntentCreate>;
 
+// ── conversational edit (§9.6) ───────────────────────────────────────────
+/** A validated, id-resolved edit action (what the Worker stores and executes; never what the client sends).
+ *  Line indexes are 0-based positions in the intent's lines as they were when the plan was made. */
+export const EditAction = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("update_intent"), intentId: Id,
+    payee: z.string().min(1).max(200).nullable(), date: IsoDate.nullable(), accountId: Id.nullable(),
+    memo: z.string().max(200).nullable(), clearMemo: z.boolean(),
+    totalAmount: Milli.nullable(), approximate: z.boolean().nullable(),
+  }),
+  z.object({
+    type: z.literal("update_line"), intentId: Id, lineIndex: z.int().min(0).max(19),
+    categoryId: Id.nullable(), amount: Milli.nullable(), approximate: z.boolean().nullable(), description: z.string().min(1).max(200).nullable(),
+  }),
+  z.object({
+    type: z.literal("add_line"), intentId: Id,
+    categoryId: Id, amount: Milli, approximate: z.boolean(), description: z.string().min(1).max(200),
+  }),
+  z.object({ type: z.literal("remove_line"), intentId: Id, lineIndex: z.int().min(0).max(19) }),
+  z.object({ type: z.literal("delete_intent"), intentId: Id }),
+  z.object({ type: z.literal("extend"), intentId: Id, days: z.int().min(1).max(90) }),
+  z.object({ type: z.literal("keep_final"), intentId: Id }),
+  z.object({ type: z.literal("create_intent"), draft: IntentCreate }),
+]);
+export type EditAction = z.infer<typeof EditAction>;
+
 export const IntentStatus = z.enum(["pending", "partial", "review", "resolved", "cancelled"]);
 export const PlaceholderStatus = z.enum(["none", "created", "auto_matched", "deleted", "missing", "failed", "final"]);
 export type IntentStatus = z.infer<typeof IntentStatus>; // WP1 addition
@@ -175,6 +203,7 @@ export type ReviewItem = z.infer<typeof ReviewItem>;
 export const AuditAction = z.enum([
   "login", "logout", "settings_changed", "secret_changed", "admin_change",
   "intent_created", "intent_updated", "intent_extended", "intent_cancelled", "intent_resolved", "intent_kept_final",
+  "intent_edit_conversational",
   "placeholder_created", "placeholder_updated", "placeholder_deleted", "placeholder_delete_refused", "final_entry_created",
   "txn_categorized", "txn_split", "txn_approved",
   "review_created", "review_resolved", "review_dismissed",

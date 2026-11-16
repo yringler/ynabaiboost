@@ -281,3 +281,23 @@ export const auditLog = sqliteTable(
   },
   (t) => [index("audit_user_at").on(t.userId, t.at)],
 );
+
+// ── conversational edits (migrations/0002_edit_plans.sql, DESIGN §9.6) ─────────
+export const editPlans = sqliteTable(
+  "edit_plans",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    planId: text("plan_id").notNull(),
+    text: text("text").notNull(),
+    inputMode: text("input_mode", { enum: ["typed", "browser_stt", "server_stt"] }).notNull(),
+    selectedIds: text("selected_ids").notNull(), // JSON string[]
+    summary: text("summary").notNull(),
+    actions: text("actions").notNull(), // JSON { action: EditAction; line: string }[]
+    versions: text("versions").notNull(), // JSON Record<intentId, updatedAt>
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    appliedAt: integer("applied_at"),
+  },
+  (t) => [index("edit_plans_user").on(t.userId, t.expiresAt)],
+);

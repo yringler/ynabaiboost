@@ -39,6 +39,16 @@ export const UpdateIntentReq = z.object({
 }).strict();
 export const ExtendIntentReq = z.object({ days: z.int().min(1).max(90) });
 export const LinkIntentReq = z.object({ transactionId: Id, lineIds: z.array(Id).nullable() }); // null = all open lines
+/** Conversational edit of open intents (§9.6). selectedIntentIds may be empty (then any open intent may be targeted). */
+export const MAX_EDIT_CHARS = 1000;
+export const MAX_EDIT_SELECTION = 50;
+export const EditIntentsReq = z.object({
+  text: z.string().trim().min(1).max(MAX_EDIT_CHARS),
+  selectedIntentIds: z.array(Id).max(MAX_EDIT_SELECTION),
+  inputMode: InputMode,
+});
+/** Applies a stored plan by its server-issued token; the action list itself is never sent by the client. */
+export const ApplyEditReq = z.object({ token: z.string().min(16).max(128) });
 export const ResolveReviewReq = z.union([
   z.object({ optionId: z.string() }),
   z.object({ dismiss: z.literal(true) }),
@@ -58,6 +68,19 @@ export const ParseRes = z.object({
   status: z.enum(["ok", "not_a_transaction", "needs_clarification"]),
   question: z.string().nullable(),
   drafts: z.array(IntentDraft),
+  warnings: z.array(z.string()),
+});
+export const EditActionResult = z.object({ line: z.string(), ok: z.boolean(), error: z.string().nullable() });
+export const EditRes = z.object({
+  token: z.string().nullable(),                 // null when there is nothing to apply, or it was applied
+  expiresAt: z.int().nullable(),
+  summary: z.string(),
+  lines: z.array(z.string()),                   // one human-readable line per valid action, in order
+  dropped: z.array(z.string()),                 // actions the Worker refused, with the reason
+  question: z.string().nullable(),              // Claude's clarify question, if any
+  needsConfirmation: z.boolean(),
+  applied: z.boolean(),
+  results: z.array(EditActionResult),           // per action, when applied
   warnings: z.array(z.string()),
 });
 export const IntentsRes = z.object({ intents: z.array(Intent) });
@@ -89,6 +112,8 @@ export const API = {
   sync:            route("POST",   "/api/sync", null, SyncResult),
   parse:           route("POST",   "/api/intents/parse", ParseReq, ParseRes),
   createIntents:   route("POST",   "/api/intents", CreateIntentsReq, CreateIntentsRes),
+  editIntents:     route("POST",   "/api/intents/edit", EditIntentsReq, EditRes),
+  applyEdit:       route("POST",   "/api/intents/edit/apply", ApplyEditReq, EditRes),
   listIntents:     route("GET",    "/api/intents", null, IntentsRes, IntentListQuery),
   getIntent:       route("GET",    "/api/intents/:id", null, IntentRes),
   updateIntent:    route("PATCH",  "/api/intents/:id", UpdateIntentReq, IntentRes),

@@ -2,10 +2,11 @@
 // stale actions (Extend 7d/14d, Keep as final, Delete, Link manually → candidates sheet).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
-import { Loader2Icon } from "lucide-react";
+import { Loader2Icon, MessageSquareTextIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { CurrencyFormat, Intent } from "../../shared/schemas";
+import { EditSheet } from "../components/EditSheet";
 import { PageTitle } from "../components/Page";
 import { IntentCard, intentStatusLabel, matchedProgress, PLACEHOLDER_LABEL } from "../components/IntentCard";
 import { ReviewCard } from "../components/ReviewCard";
@@ -157,9 +158,9 @@ function StaleActions({ intent, actions, onLink, onDelete }: { intent: Intent; a
   );
 }
 
-function IntentDetail({ intent, currency, categoryName, actions, onClose, onLink, onDelete }: {
+function IntentDetail({ intent, currency, categoryName, actions, onClose, onLink, onDelete, onEdit }: {
   intent: Intent; currency: CurrencyFormat | null; categoryName: (id: string) => string; actions: Actions;
-  onClose: () => void; onLink: () => void; onDelete: () => void;
+  onClose: () => void; onLink: () => void; onDelete: () => void; onEdit: () => void;
 }) {
   const progress = matchedProgress(intent);
   const open = intent.status === "pending" || intent.status === "partial" || intent.status === "review";
@@ -207,6 +208,9 @@ function IntentDetail({ intent, currency, categoryName, actions, onClose, onLink
       {intent.rawText && <p className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">“{intent.rawText}”</p>}
       {open && (
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" className="h-11" disabled={actions.busy} onClick={onEdit}>
+            <MessageSquareTextIcon /> Edit by voice or text
+          </Button>
           {intent.placeholder.status === "created" && (
             <Button
               variant="outline"
@@ -259,6 +263,15 @@ export function PendingPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [linkId, setLinkId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  // Conversational edit (§9.6): multi-select on the Pending and Stale lists; the sheet works with none selected.
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+  const [editIds, setEditIds] = useState<string[] | null>(null);
+  const toggle = (id: string) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
 
   const reviewList = reviews.data?.reviews ?? [];
   const pendingList = [...(open.data?.intents ?? [])].filter((i) => !i.isStale).sort((a, b) => b.createdAt - a.createdAt);
@@ -267,6 +280,27 @@ export function PendingPage() {
   const detail = detailId ? allIntents.get(detailId) : undefined;
   const linking = linkId ? allIntents.get(linkId) : undefined;
   const deleting = deleteId ? allIntents.get(deleteId) : undefined;
+  const selected = [...selectedIds].flatMap((id) => {
+    const i = allIntents.get(id);
+    return i ? [i] : [];
+  });
+  const editing = (editIds ?? []).flatMap((id) => {
+    const i = allIntents.get(id);
+    return i ? [i] : [];
+  });
+  const editBar = (
+    <div className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2" role="toolbar" aria-label="Edit pending items">
+      <span className="flex-1 text-sm text-muted-foreground">
+        {selected.length > 0 ? `${selected.length} selected` : "Select items, or just say what changed"}
+      </span>
+      {selected.length > 0 && (
+        <Button size="sm" variant="ghost" className="h-10" onClick={() => setSelectedIds(new Set())}>Clear</Button>
+      )}
+      <Button size="sm" className="h-10" onClick={() => setEditIds(selected.map((i) => i.id))}>
+        <MessageSquareTextIcon /> Edit by voice or text
+      </Button>
+    </div>
+  );
 
   const tab: PendingTab = search.tab ?? (reviewList.length > 0 ? "review" : "pending");
 
@@ -306,14 +340,24 @@ export function PendingPage() {
         <TabsContent value="pending" className="flex flex-col gap-3 pt-2">
           {loading(open)}
           {open.data && pendingList.length === 0 && <Empty text="No purchases waiting for the bank." />}
+          {open.data && pendingList.length > 0 && editBar}
           {pendingList.map((i) => (
-            <IntentCard key={i.id} intent={i} currency={currency} categories={categories} onOpen={() => setDetailId(i.id)} />
+            <IntentCard
+              key={i.id}
+              intent={i}
+              currency={currency}
+              categories={categories}
+              onOpen={() => setDetailId(i.id)}
+              selected={selectedIds.has(i.id)}
+              onToggleSelect={() => toggle(i.id)}
+            />
           ))}
         </TabsContent>
 
         <TabsContent value="stale" className="flex flex-col gap-3 pt-2">
           {loading(stale)}
           {stale.data && staleList.length === 0 && <Empty text="Nothing stale." />}
+          {stale.data && staleList.length > 0 && editBar}
           {staleList.map((i) => (
             <IntentCard
               key={i.id}
@@ -321,6 +365,8 @@ export function PendingPage() {
               currency={currency}
               categories={categories}
               onOpen={() => setDetailId(i.id)}
+              selected={selectedIds.has(i.id)}
+              onToggleSelect={() => toggle(i.id)}
               actions={<StaleActions intent={i} actions={actions} onLink={() => setLinkId(i.id)} onDelete={() => setDeleteId(i.id)} />}
             />
           ))}
@@ -343,6 +389,10 @@ export function PendingPage() {
                 onClose={() => setDetailId(null)}
                 onLink={() => setLinkId(detail.id)}
                 onDelete={() => setDeleteId(detail.id)}
+                onEdit={() => {
+                  setEditIds([detail.id]);
+                  setDetailId(null);
+                }}
               />
             </>
           )}
@@ -375,6 +425,12 @@ export function PendingPage() {
           }}
         />
       )}
+      <EditSheet
+        open={editIds !== null}
+        onOpenChange={(o) => !o && setEditIds(null)}
+        selected={editing}
+        onDone={() => setSelectedIds(new Set())}
+      />
       {actions.busy && <Loader2Icon className="fixed right-4 bottom-24 size-5 animate-spin text-muted-foreground" aria-label="Working" />}
     </div>
   );

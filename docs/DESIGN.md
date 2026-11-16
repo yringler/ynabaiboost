@@ -146,6 +146,7 @@ The generated `Env` type (`npm run cf-typegen` → `worker-configuration.d.ts`) 
 ├─ worker-configuration.d.ts (generated)                                      [WP1]
 ├─ components.json (shadcn), index.html, public/ (manifest, icons)           [WP6]
 ├─ migrations/0001_init.sql                                                   [WP1]
+├─ migrations/0002_edit_plans.sql                     (conversational edit plans, §9.6)
 ├─ docs/ RESEARCH.md, DESIGN.md, SPIKES.md                                    [WP1; SPIKES: WP3/WP4]
 ├─ src/
 │  ├─ shared/                     ← imported by BOTH worker and client; runtime deps: zod, date-fns, fastest-levenshtein
@@ -498,6 +499,20 @@ CREATE TABLE audit_log (
   after_json   TEXT                                          -- TxnSnapshot (§6.2) for txn writes, else NULL
 );
 CREATE INDEX audit_user_at ON audit_log(user_id, at);
+
+-- migrations/0002_edit_plans.sql (§9.6): conversational edit plans, kept 15 minutes, applied once by token.
+CREATE TABLE edit_plans (
+  id TEXT PRIMARY KEY,                                         -- the token
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_id TEXT NOT NULL, text TEXT NOT NULL,
+  input_mode TEXT NOT NULL CHECK (input_mode IN ('typed','browser_stt','server_stt')),
+  selected_ids TEXT NOT NULL,                                  -- JSON string[]
+  summary TEXT NOT NULL,
+  actions TEXT NOT NULL,                                       -- JSON [{ action: EditAction, line }]
+  versions TEXT NOT NULL,                                      -- JSON { intentId: updated_at }
+  created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, applied_at INTEGER
+);
+CREATE INDEX edit_plans_user ON edit_plans(user_id, expires_at);
 ```
 
 Drizzle `src/worker/db/schema.ts` mirrors this file table by table, column by column, using `sqliteTable` with snake_case column names and camelCase properties. A WP1 test applies the migration and runs `select().limit(1)` on every Drizzle table to catch drift. Future migrations are hand-written as `migrations/000N_*.sql`. `drizzle-kit generate` may be used to draft them, but the reviewer checks them.
@@ -589,12 +604,14 @@ export const SettingsShape = z.object({
   flagColor: FlagColor.nullable(),              // flag put on transactions we touch
   voiceMode: VoiceMode,                         // 'server' only honoured if admin allowed
   aiDataConsent: z.boolean(),                   // must be true before any Claude call
+  autoApplyEdits: z.boolean(),                  // conversational edits apply without a confirm sheet (§9.6)
 });
 export type Settings = z.infer<typeof SettingsShape>;
 export const DEFAULT_SETTINGS: Settings = {
   planId: null, timezone: "UTC", createPlaceholders: true, defaultAccountId: null,
   autoApproveMatches: true, staleAfterDays: 14, amazonWindowDays: 21, maxTaxRate: 0.11,
   flagColor: "purple", voiceMode: "browser", aiDataConsent: false,
+  autoApplyEdits: false,
 };
 export const SettingsPatch = SettingsShape.partial().strict();
 export type SettingsPatch = z.infer<typeof SettingsPatch>;
@@ -722,6 +739,7 @@ export type ReviewItem = z.infer<typeof ReviewItem>;
 export const AuditAction = z.enum([
   "login", "logout", "settings_changed", "secret_changed", "admin_change",
   "intent_created", "intent_updated", "intent_extended", "intent_cancelled", "intent_resolved", "intent_kept_final",
+  "intent_edit_conversational",                 // §9.6: one row per applied edit, summary holds the user's words
   "placeholder_created", "placeholder_updated", "placeholder_deleted", "placeholder_delete_refused", "final_entry_created",
   "txn_categorized", "txn_split", "txn_approved",
   "review_created", "review_resolved", "review_dismissed",
@@ -807,6 +825,15 @@ export const UpdateIntentReq = z.object({
 }).strict();
 export const ExtendIntentReq = z.object({ days: z.int().min(1).max(90) });
 export const LinkIntentReq = z.object({ transactionId: Id, lineIds: z.array(Id).nullable() }); // null = all open lines
+// §9.6 conversational edit (EditAction, the resolved action union, lives in schemas.ts; see §9.6)
+export const MAX_EDIT_CHARS = 1000;
+export const MAX_EDIT_SELECTION = 50;
+export const EditIntentsReq = z.object({
+  text: z.string().trim().min(1).max(MAX_EDIT_CHARS),
+  selectedIntentIds: z.array(Id).max(MAX_EDIT_SELECTION),
+  inputMode: InputMode,
+});
+export const ApplyEditReq = z.object({ token: z.string().min(16).max(128) });
 export const ResolveReviewReq = z.union([
   z.object({ optionId: z.string() }),
   z.object({ dismiss: z.literal(true) }),
@@ -827,6 +854,12 @@ export const ParseRes = z.object({
   question: z.string().nullable(),
   drafts: z.array(IntentDraft),
   warnings: z.array(z.string()),
+});
+export const EditActionResult = z.object({ line: z.string(), ok: z.boolean(), error: z.string().nullable() });
+export const EditRes = z.object({
+  token: z.string().nullable(), expiresAt: z.int().nullable(), summary: z.string(),
+  lines: z.array(z.string()), dropped: z.array(z.string()), question: z.string().nullable(),
+  needsConfirmation: z.boolean(), applied: z.boolean(), results: z.array(EditActionResult), warnings: z.array(z.string()),
 });
 export const IntentsRes = z.object({ intents: z.array(Intent) });
 export const IntentRes = z.object({ intent: Intent });
@@ -857,6 +890,8 @@ export const API = {
   sync:            route("POST",   "/api/sync", null, SyncResult),
   parse:           route("POST",   "/api/intents/parse", ParseReq, ParseRes),
   createIntents:   route("POST",   "/api/intents", CreateIntentsReq, CreateIntentsRes),
+  editIntents:     route("POST",   "/api/intents/edit", EditIntentsReq, EditRes),
+  applyEdit:       route("POST",   "/api/intents/edit/apply", ApplyEditReq, EditRes),
   listIntents:     route("GET",    "/api/intents", null, IntentsRes, IntentListQuery),
   getIntent:       route("GET",    "/api/intents/:id", null, IntentRes),
   updateIntent:    route("PATCH",  "/api/intents/:id", UpdateIntentReq, IntentRes),
@@ -914,6 +949,8 @@ Every handler validates its body with `validate("json", <Req>)` (lib/validate.ts
 | GET | `/api/catalog` | → `CatalogRes` | active | WP3 | From the cache. Error `no_plan_selected` if no plan is set. Runs an initial sync first if the cache is empty. |
 | POST | `/api/sync` | → `SyncResult` | active | WP3 | `runUserCycle(env, userId, "manual")` — called only when the user taps "Sync now". Returns `skipped:"throttled"` if the last cycle was under 60 s ago. Errors (e.g. `ynab_subscription_lapsed`) come back in `errors` with `skipped:"error"`, not as an HTTP error, so the SPA can show a banner. Also runs the initial sync (never done in cron). |
 | POST | `/api/intents/parse` | `ParseReq` → `ParseRes` | active | WP4 | Needs consent and a key. Writes nothing. |
+| POST | `/api/intents/edit` | `EditIntentsReq` → `EditRes` | active | §9.6 | Conversational edit preview. Needs consent and a key. Selected ids must all be open intents of this user in the current plan (else 409, no Claude call). Stores the validated plan (`edit_plans`, 15 min) and returns its token, or applies it at once when `autoApplyEdits` allows (§9.6). |
+| POST | `/api/intents/edit/apply` | `ApplyEditReq` → `EditRes` | active, owner | §9.6 | Applies a stored plan by token, once (404 unknown / other user's, 409 expired or already applied). Re-validates every stored action against the current intents; per-action results. |
 | POST | `/api/intents` | `CreateIntentsReq` → `CreateIntentsRes` | active | WP5 | §10.7 "Intent creation": interactive sync (1 YNAB request), insert intents, reconcile only the new intents, then a placeholder or final entry for each intent that is still `pending`. If a placeholder fails, the intent is still created (`placeholder_status='failed'` plus a warning). |
 | GET | `/api/intents?status=open\|stale\|resolved\|cancelled` | → `IntentsRes` | active | WP5 | `open` = pending/partial/review. `stale` = open and `expires_on < today`. `resolved` is limited to the last 30 days. |
 | GET | `/api/intents/:id` | → `IntentRes` | active, owner | WP5 | |
@@ -1396,6 +1433,100 @@ line `exact`. Tolerances: an exact amount gets `exactTolerance` = 1 minor unit (
 The SPA shows `PRECISION_LABEL`: "Exact — will auto-match" / "Approximate — may ask you" plus the note, on the
 confirm screen (`DraftEditor`) and on pending cards (`IntentCard`).
 
+
+### 9.6 Conversational edit of pending intents (`ai/edit.ts`, `services/edit.ts`, `routes/edit.ts`)
+
+Owner request (log 38). On the Pending screen the user selects zero or more open intents (checkbox or long
+press) and says or types what changed: "that was actually the 13th", "make it 212.47", "split off 30 for
+household", "delete these", "the Costco one was on the Amex", "oh and I also spent 40 at Target, gas". The
+single-intent detail sheet offers the same with that intent preselected. The mic is `useSpeechInput` (§11.3).
+
+**Routes.** `POST /api/intents/edit` `{ text ≤ 1000, selectedIntentIds ≤ 50, inputMode }` → `EditRes`;
+`POST /api/intents/edit/apply` `{ token }` → `EditRes`. `EditRes = { token, expiresAt, summary, lines[],
+dropped[], question, needsConfirmation, applied, results[{ line, ok, error }], warnings[] }`.
+
+**Call.** Same helper and policy as parse (§9.1): `callStructured`, `claude-sonnet-5-5`, adaptive thinking,
+`output_config.effort: "low"`, `output_config.format` from the zod schema, `fallbacks: "default"`, 8000 max
+tokens, 30 s, 1 retry, no `cache_control`. System = `EDIT_SYSTEM` + the parse catalog block (`renderCatalog`:
+categories `c..`, budget accounts `a..`, payees). The user turn (`renderEditUserTurn`) carries TODAY, the
+selection (`SELECTED: i1, i3` or `none`), the open items (selected first, then newest; at most 60, older ones
+counted) and the request in triple quotes. Each item is `iN | "payee" | date (weekday) | account aN "name" |
+total ≈200.00 (approximate) | flags [selected, status, stale, not editable, placeholder] | memo "…"` with lines
+`L1 | c3 "Groceries" | ≈170.00 | "description"`. Every user-controlled string (payee, memo, description, account
+and category names) is rendered as a one-line, length-bounded JSON string literal, so it cannot break the format;
+the prompt says items and request are data. The model never sees or emits a database id: it uses `iN`, `Ln`,
+`cN`, `aN` refs, resolved by the Worker.
+
+**Schema (`ai/schemas.ts` `EditModelPlan`).** `{ summary, actions[] }`, a closed discriminated union on `type`,
+every field required (null = keep), so the JSON schema is strict (`anyOf` of `additionalProperties:false`
+objects):
+
+| type | fields |
+|---|---|
+| `update_intent` | `intent_ref, payee?, date?, account_ref?, memo? ("" clears), total_amount?, total_is_approximate?` |
+| `update_line` | `intent_ref, line_number, category_ref?, amount?, amount_is_estimate?, description?` |
+| `add_line` | `intent_ref, category_ref, amount, amount_is_estimate, description` |
+| `remove_line` | `intent_ref, line_number` |
+| `delete_intent` / `keep_final` | `intent_ref` |
+| `extend` | `intent_ref, days? (default 7)` |
+| `create_intent` | `transaction` = a `ParsedTransaction` (§9.2) |
+| `clarify` | `question` |
+
+Amounts are currency units as said (like parse); the Worker converts to positive milliunits. The resolved,
+id-based form is `EditAction` in `shared/schemas.ts` (what is stored and executed).
+
+**Prompt rules.** "these/them/it" = the selection; a merchant/date/amount reference must match exactly one item,
+otherwise `clarify` (never guess); with a selection only selected items may change (else `clarify`), new
+purchases always allowed; refs only from the lists; a split keeps the total (reduce one line, add another);
+dates resolved against TODAY, never future; change only what was asked.
+
+**Validation (all before anything runs; a refused action is dropped with a human-readable reason).**
+1. Request: every selected id is an open (`pending|partial|review`) intent of this user in the current plan,
+   else 409 before the Claude call (another user's id looks the same as a closed one).
+2. Refs: an `iN` that was not listed → dropped. Category/account refs must be in the catalog; categories are
+   never created.
+3. Scope (owner decision): selection non-empty ⇒ only selected intents may be targeted; anything else is dropped
+   ("X isn't selected. Select it to change it"). `create_intent` is always allowed. With no selection any listed
+   open intent may be targeted; ambiguity is the model's `clarify`.
+4. Values: dates real, ≤ today, ≥ today − 365; amounts finite, > 0, ≤ 1 000 000 units, rounded to the minor
+   unit; line numbers in range; at most 30 actions; at most 20 lines after the change, never zero (delete instead).
+5. State: line edits only on a `pending` intent with no matched line (the PATCH rule); `keep_final` only with a
+   created placeholder; `delete_intent` wins over other actions on the same intent; duplicates dropped.
+6. New purchases go through `toDraft` (§9.4, same warnings) + `IntentCreate`; every line needs a category and
+   the total an amount, else dropped ("add it from Capture"). No explicit account → last account for the payee,
+   then the default account (§9.4.6).
+7. Precision is never the model's: an amount is approximate when the model hedges **or** it is not written with
+   cents in the intent's text + the request (`statedAmounts`). The preview shows the deterministic level the
+   executor will store (`assessPrecision` over `raw_text + "\n" + request`), e.g.
+   "Costco · total ≈$200.00 → $212.47 (exact)". A changed total re-derives `facts.totalHasCents` from the
+   request (`factsAfterEdit`), since the parse-time fact described the old total.
+
+**Plan lines.** One per action: `Costco · date Nov 14 → Nov 13`, `Costco · total ≈$200.00 → $212.47 (exact)`,
+`Costco · line 1 (groceries): ≈$200.00 → ≈$170.00`, `Costco · add Household ≈$30.00`, `Delete: Target ≈$40.00`,
+`Target · keep watching 7 more days (until Dec 7)`, `New: Target ≈$40.00 · Fuel · Visa`, plus `dropped[]` reasons
+and Claude's `question`.
+
+**Preview vs apply (owner decision).** The validated actions (ids resolved), the selection, each target's
+`updated_at` and the plan lines are stored in `edit_plans` (migration 0002) under a random token for 15 minutes;
+expired rows are pruned on the user's next preview. Default: the SPA shows the plan in a sheet; Apply sends only
+`{ token }` (the client never resends actions). Apply claims the row once (`UPDATE … WHERE applied_at IS NULL AND
+expires_at > now RETURNING`), refuses another plan (409), and **re-runs the checks** on the stored actions against
+the current intents and catalog: still open, in this plan, in the stored scope, `updated_at` unchanged since the
+preview, ids still in the catalog. Setting `autoApplyEdits` ("Apply voice edits without confirming", default off):
+the preview endpoint applies at once and the SPA shows the summary as a toast, **except** when Claude asked a
+question, any action was dropped, or the plan deletes more than one intent; then the sheet asks as usual.
+
+**Execution.** In order, through the same service functions as the HTTP routes (`services/intents.ts`):
+all `update_intent/update_line/add_line/remove_line` of one intent → one `updateIntent` (PATCH path: placeholder
+update with the live untouched-placeholder guard, account change replaces the placeholder, precision and
+tolerances recomputed, `intent_updated` audit), with the request appended to `raw_text` (so later re-assessments
+see the stated amount); line edits address the lines as listed, a single line follows an explicit total, and
+otherwise the total becomes the sum of the lines (a split keeps it). `delete_intent` → `cancelIntent`
+(safe placeholder delete), `extend` → `extendIntent`, `keep_final` → `keepIntent`, all `create_intent` → one
+`createIntents` (lock + sync + reconcile + placeholders) with the request as `raw_text`. Each action gets a result;
+a failure (e.g. YNAB refused, 409) is reported on its line and the rest still run (no silent partial success).
+One `intent_edit_conversational` audit row stores the request text and "n of m changes applied".
+
 ---
 
 ## 10. Reconciliation (WP5)
@@ -1865,7 +1996,7 @@ src/client/
 | `/login` | "Connect with YNAB" (only when `GET /auth/config` returns `oauthAvailable`). Collapsible "Use a Personal Access Token" form with a link to YNAB Developer Settings. Link to `/privacy`. `error=not_allowed` (or 403 `not_allowed` from PAT) shows "This app is private. Send your user id <uid> to the owner." with a copy button. | `POST /auth/pat` |
 | `/onboarding` | Steps: (1) pick plan; (2) default account (for placeholders; accounts without bank import are labelled "no import: entries are final"); (3) timezone (prefilled from `Intl.DateTimeFormat().resolvedOptions().timeZone`); (4) Anthropic key; (5) AI data consent with explicit text naming Anthropic. | plans, catalog, settings, secrets |
 | `/` Capture | Large textarea with autofocus, `MicButton`, "Parse" button (⌘/Ctrl+Enter). After parsing, a `DraftEditor` card per draft, with warnings in amber. Low-confidence categories get an outlined chip and a "?" badge. Line amounts must add up (live sum shown). "Parse" shows a spinner with "Thinking…" and a cancel button (`AbortController`; up to 30 s). Payees with no cached match show a "new payee" badge. "Save" → `createIntents` → toast "Saved · placeholder created" / "Saved · recorded as final (no bank import)" / "Matched to an existing import" → clear. `needs_clarification` shows the question above the textarea. `not_a_transaction` shows a toast. On `ai_*` errors, offer "Enter manually" (an empty draft). | parse, catalog, createIntents |
-| `/pending` | Tabs: **Review** (ReviewCards), **Pending** (IntentCards, newest first, partial shows "2 of 3 items matched"), **Stale** (cards with "Extend 7d / 14d", "Keep as final", "Delete", "Link manually" → candidates sheet → tap txn → link). Detail sheet shows lines, placeholder status, raw text, "Link manually" (same candidates sheet), cancel, and "Keep as final" for pending intents with a placeholder ("I paid cash"). Cross-intent review cards show both intents. | intents, reviews, keepIntent |
+| `/pending` | Tabs: **Review** (ReviewCards), **Pending** (IntentCards, newest first, partial shows "2 of 3 items matched"), **Stale** (cards with "Extend 7d / 14d", "Keep as final", "Delete", "Link manually" → candidates sheet → tap txn → link). Detail sheet shows lines, placeholder status, raw text, "Link manually" (same candidates sheet), cancel, and "Keep as final" for pending intents with a placeholder ("I paid cash"). Cross-intent review cards show both intents. Pending and Stale cards have a checkbox (or long press) for multi-select and an "Edit by voice or text" bar (works with nothing selected); the detail sheet has the same button with that intent preselected → `EditSheet` (§9.6: textarea + mic, Preview, plan lines, refused changes, question, Apply/Cancel). | intents, reviews, keepIntent, editIntents, applyEdit |
 | `/activity` | Infinite list, read-only. | activity |
 | `/settings` | **Your user id** (monospace + copy button), YNAB connection (auth type, needs re-auth → "Reconnect"), plan, default account, timezone, toggles (placeholders, auto-approve, AI consent), stale days, Amazon window, max tax %, flag color, voice mode (server option disabled unless `sttAllowed`), Anthropic key (set/replace/remove; shows "set" only), Activity link, Log out, Delete my data (confirm dialog). | me, patchSettings, secrets |
 | `/admin` | Visible only if `me.isAdmin`. Table of users: id, STT switch, created, last seen. Access is managed with the D16 vars. | adminUsers, adminPatchUser |
@@ -2274,3 +2405,4 @@ Revision 2 applies an adversarial review of revision 1 and `RESEARCH.md`. Each i
 | 35 | Owner decision: inbox removed — YNAB already suggests categories; app focuses on predict/resolve | — | `/inbox`, `/api/inbox/*`, `inbox_suggestions`, `backgroundInboxSuggestions`, `Me.counts.inbox`, `SyncResult.inboxSuggested` and the inbox Claude call are gone. Imports are linked to intents from the intent side ("Link manually", §10.9). |
 | 36 | Owner request: precision-aware Amazon auto-matching | A | Claude extracts facts (cents, items, tax, shipping, discounts, gift card, grand total, shipments, clarity note); `assessPrecision` verifies them against the user's text (§9.5); exact amounts get a 1-minor-unit tolerance (§10.2); verified Amazon orders auto-resolve multi-charge splits only when exactly one assignment explains the charges (§10.6a). New columns `intents.precision/precision_note/order_facts/order_plan`, `intent_lines.exact`. Paste up to 20 000 chars. Precision chip on confirm and pending cards. |
 | 37 | Owner decision: model `claude-sonnet-5-5` | — | D8, §9.1: explicit `effort: "low"`, adaptive thinking, `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`), no forced `tool_choice`, no sampling params. |
+| 38 | Owner request: conversational editing of pending intents | A | §9.6: multi-select + voice/text on Pending; `POST /api/intents/edit` (Claude → closed action union → refs resolved and validated, scope = selection) and `/apply` by a stored, expiring token with re-validation; setting `autoApplyEdits` (default off; still confirms on a question, a dropped action or more than one delete); execution through the route service functions (`services/intents.ts`); audit `intent_edit_conversational`; table `edit_plans` (migration 0002). |

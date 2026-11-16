@@ -155,6 +155,14 @@ Resolutions of every contract issue the packages reported. No frozen §6–§8 s
   constants), WP5 (`domain/labels.ts`, `domain/nudge.ts`, `engine/reviews.ts`, `engine/store.ts`) and WP2
   (`auth/me.ts`, seal/batch helpers). Other packages import only §8 exports from each other.
 
+- **Conversational edit (§9.6, log 38).** The intent write paths moved from `routes/intents.ts` into
+  `services/intents.ts` (`createIntents`, `updateIntent`, `extendIntent`, `cancelIntent`, `keepIntent`,
+  `loadBase`, `engineCtx`); the routes are thin wrappers and `services/edit.ts` executes edits through the same
+  functions. `updateIntent(…, { note })` appends the edit words to `raw_text` before re-assessing precision.
+  Pure helpers: `domain/note.ts` (`appendNote`, `storedFacts`, `factsAfterEdit`), `ai/edit.ts` (resolve/check/
+  describe; unit-tested in the node pool). New table `edit_plans` in `migrations/0002_edit_plans.sql`
+  (run `npm run db:migrate:remote` on deploy). `routes/edit.ts` is mounted before `intentRoutes`.
+
 ### Client
 - `createAppRouter(queryClient, history?)` replaces WP1's `router` export; `main.tsx` builds both.
 - Guards: logged-out `/` → `/welcome`; other 401 → `/login?redirect=<relative path>`; 403 `not_allowed` →
