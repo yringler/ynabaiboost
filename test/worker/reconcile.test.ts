@@ -409,6 +409,7 @@ describe("applyMatch (§10.9)", () => {
   it("refuses an allocation that does not add up, and matched lines", async () => {
     const i = await seed({ payee: "Costco", total: 10000 });
     const t = mkTxn({ id: uid("t"), amount: -10000 });
+    fake.seed(t); // manual matches read the txn live
     await cacheTxns(userId, [t]);
     await expect(A.applyMatch(ctx(), { intentId: i.id, txnId: t.id, lineIds: i.lineIds, allocation: [{ categoryId: "c", amount: -9990, memo: null }], score: null, kind: "manual" }))
       .rejects.toMatchObject({ code: "validation" });

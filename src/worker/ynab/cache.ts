@@ -267,7 +267,7 @@ const SCAN_LIMIT = 500;
 const txnNames = (t: { payeeName: string | null; importPayeeName: string | null; importPayeeNameOriginal: string | null }) =>
   [t.importPayeeNameOriginal, t.importPayeeName, t.payeeName];
 
-/** Account of the most recent non-transfer txn at a similar payee (payeeSimilarity ≥ 0.8), on an open account. */
+/** Account of the most recent non-transfer txn at a similar payee (payeeSimilarity ≥ 0.8), on an open on-budget account. */
 export async function lastAccountForPayee(db: DB, userId: string, planId: string, payee: string): Promise<string | null> {
   const rows = await db.select({
     accountId: ynabTransactions.accountId, payeeName: ynabTransactions.payeeName,
@@ -278,6 +278,7 @@ export async function lastAccountForPayee(db: DB, userId: string, planId: string
     .where(and(
       eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId), eq(ynabTransactions.deleted, false),
       isNull(ynabTransactions.transferAccountId), eq(ynabAccounts.deleted, false), eq(ynabAccounts.closed, false),
+      eq(ynabAccounts.onBudget, true), // a tracking account cannot hold a categorized placeholder
     ))
     .orderBy(desc(ynabTransactions.date), desc(ynabTransactions.updatedAt))
     .limit(SCAN_LIMIT)

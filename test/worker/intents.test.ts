@@ -318,10 +318,56 @@ describe("extend / cancel / keep", () => {
     const created = CreateIntentsRes.parse((await create(draft())).json).intents[0]!;
     const i = IntentRes.parse((await req("POST", `/api/intents/${created.id}/keep`)).json).intent;
     expect(i).toMatchObject({ status: "resolved", placeholder: { status: "final" } });
-    expect(fake.callsOf("updateTransactions")[0]?.args[1]).toEqual([{ id: created.placeholder.txnId, memo: `groceries [aib:${created.shortRef}]` }]);
+    // The final record carries the un-nudged total (199.99 placeholder → 200.00) and the line's category.
+    expect(fake.callsOf("updateTransactions")[0]?.args[1]).toEqual([{
+      id: created.placeholder.txnId, memo: `groceries [aib:${created.shortRef}]`, amount: -200000, categoryId: "cat-groceries",
+    }]);
     const acts = (await db().select().from(auditLog).where(eq(auditLog.intentId, created.id)).all()).map((a) => a.action);
     expect(acts).toContain("intent_kept_final");
     expect((await req("POST", `/api/intents/${created.id}/keep`)).status).toBe(409);
+  });
+
+  it("keep as final with several categories turns the placeholder into a split final entry (review fix)", async () => {
+    const created = CreateIntentsRes.parse((await create(draft({
+      totalAmount: 50000, lines: [
+        { description: "produce", categoryId: "cat-groceries", amount: 30000, approximate: true, confidence: null },
+        { description: "flowers", categoryId: "cat-home", amount: 20000, approximate: true, confidence: null },
+      ],
+    }))).json).intents[0]!;
+    expect(fake.txns.get(created.placeholder.txnId!)!.amount).toBe(-49990); // nudged placeholder
+    await req("POST", `/api/intents/${created.id}/keep`);
+    const [u] = fake.callsOf("updateTransactions")[0]?.args[1] as Record<string, unknown>[];
+    expect(u).toMatchObject({ amount: -50000, categoryId: null, subtransactions: [
+      { amount: -30000, categoryId: "cat-groceries", memo: "produce" }, { amount: -20000, categoryId: "cat-home", memo: "flowers" },
+    ] });
+    expect((await row(created.id)).placeholderAmount).toBe(50000);
+  });
+
+  it("keep refuses a placeholder YNAB merged with an import (live guard) and writes nothing", async () => {
+    const created = CreateIntentsRes.parse((await create(draft())).json).intents[0]!;
+    Object.assign(fake.txns.get(created.placeholder.txnId!)!, { importId: "YNAB:x", cleared: "cleared" });
+    expect((await req("POST", `/api/intents/${created.id}/keep`)).status).toBe(409);
+    expect(fake.callsOf("updateTransactions")).toHaveLength(0);
+    expect((await row(created.id)).status).toBe("review");
+  });
+
+  it("per-intent routes act on the intent's own plan after the user switched plans (review fix)", async () => {
+    const created = CreateIntentsRes.parse((await create(draft())).json).intents[0]!;
+    m.settings = { planId: "plan-2" };
+    const i = IntentRes.parse((await req("DELETE", `/api/intents/${created.id}`)).json).intent;
+    expect(i).toMatchObject({ status: "cancelled", placeholder: { status: "deleted" } });
+    expect(fake.callsOf("getTransaction").map((c) => c.args[0])).toEqual(["plan-1"]);
+    expect(fake.callsOf("deleteTransaction").map((c) => c.args)).toEqual([["plan-1", created.placeholder.txnId]]);
+  });
+
+  it("PATCH keeps memo text the user added to the placeholder in YNAB", async () => {
+    const created = CreateIntentsRes.parse((await create(draft())).json).intents[0]!;
+    const p = fake.txns.get(created.placeholder.txnId!)!;
+    p.memo = `note from me | ${p.memo}`;
+    await req("PATCH", `/api/intents/${created.id}`, { totalAmount: 210000 });
+    const [u] = fake.callsOf("updateTransactions")[0]?.args[1] as Record<string, unknown>[];
+    expect(u).toMatchObject({ amount: -209990 });
+    expect(u).not.toHaveProperty("memo");
   });
 
   it("keep needs a created placeholder", async () => {

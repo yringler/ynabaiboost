@@ -174,6 +174,12 @@ function splitParentsOf(subs: SubTransactionBase[] | undefined): Set<string> {
   return new Set((subs ?? []).filter((s) => !s.deleted).map((s) => s.transaction_id));
 }
 
+/** Parents with only deleted subtransactions in a delta: the split was removed. */
+export function unsplitParentsOf(subs: SubTransactionBase[] | undefined): string[] {
+  const live = splitParentsOf(subs);
+  return [...new Set((subs ?? []).filter((s) => s.deleted && !live.has(s.transaction_id)).map((s) => s.transaction_id))];
+}
+
 const toSaveSubs = (subs: NonNullable<NewTxn["subtransactions"]>) =>
   subs.map((s) => ({ amount: s.amount, category_id: s.categoryId, memo: s.memo }));
 
@@ -299,6 +305,7 @@ export function createYnabClientWith(token: string, opts: ClientOptions): YnabCl
         categories: (p.categories ?? []).map((c, i) => toCachedCategory(c, i)),
         accounts: (p.accounts ?? []).map(toCachedAccount),
         payees: payeeItems,
+        unsplitTxnIds: unsplitParentsOf(p.subtransactions),
       };
     },
     async getTransaction(planId, id) {

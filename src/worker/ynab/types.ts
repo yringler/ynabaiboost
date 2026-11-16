@@ -35,4 +35,6 @@ export interface PlanDelta {
   serverKnowledge: number;
   transactions: YnabTxn[]; categoryGroups: CachedCategoryGroup[]; categories: CachedCategory[];
   accounts: CachedAccount[]; payees: CachedPayee[];
+  /** Parents whose subtransactions all arrived deleted in this delta (un-split in YNAB). Optional addition. */
+  unsplitTxnIds?: string[];
 }

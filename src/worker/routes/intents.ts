@@ -15,7 +15,7 @@ import { looseScore } from "../domain/score";
 import { computeTolerance } from "../domain/tolerance";
 import { applyMatch, loadTxn } from "../engine/apply";
 import { excludedTxnIds } from "../engine/load";
-import { createPlaceholder, safeDeletePlaceholder } from "../engine/placeholders";
+import { createPlaceholder, livePlaceholder, safeDeletePlaceholder } from "../engine/placeholders";
 import { reconcileUser, type EngineCtx } from "../engine/reconcile";
 import { detachIntentFromReviews } from "../engine/reviews";
 import {
@@ -29,6 +29,7 @@ import { newId, newShortRef } from "../lib/ids";
 import { validate } from "../lib/validate";
 import { getAccounts, getCachedTxns, getCurrency, toTxnView, upsertTxnsStmts } from "../ynab/cache";
 import { createYnabClient, type YnabClient } from "../ynab/client";
+import type { TxnUpdate } from "../ynab/types";
 import { syncPlan } from "../ynab/sync";
 
 export const intentRoutes = new Hono<AppEnv>();
@@ -48,6 +49,9 @@ async function base(c: Context<AppEnv>): Promise<Base> {
   if (!settings.planId) throw new AppError("no_plan_selected", "Choose a YNAB plan first");
   return { db, userId, settings, planId: settings.planId, today: todayIn(settings.timezone) };
 }
+
+/** Per-intent routes act on the intent's own plan, not the currently selected one (the user may have switched). */
+const forIntent = (b: Base, row: { planId: string }): Base => (row.planId === b.planId ? b : { ...b, planId: row.planId });
 
 async function engineCtx(c: Context<AppEnv>, b: Base, client?: YnabClient): Promise<EngineCtx> {
   const { planName: _n, ...currency } = await getCurrency(b.db, b.userId, b.planId);
@@ -201,9 +205,10 @@ intentRoutes.get("/intents/:id", async (c) => {
 
 intentRoutes.patch("/intents/:id", validate("json", UpdateIntentReq), async (c) => {
   const patch = c.req.valid("json");
-  const b = await base(c);
   const id = c.req.param("id");
-  const row = await requireIntent(b.db, b.userId, id);
+  const b0 = await base(c);
+  const row = await requireIntent(b0.db, b0.userId, id);
+  const b = forIntent(b0, row);
   const lines = await getLinesOf(b.db, id);
   if (row.status !== "pending" || lines.some((l) => l.status === "matched")) {
     throw new AppError("conflict", "Only a pending intent with no matched lines can be edited");
@@ -249,14 +254,22 @@ intentRoutes.patch("/intents/:id", validate("json", UpdateIntentReq), async (c) 
         await createPlaceholder(ctx, id);
       }
     } else {
+      // §10.7 guard on a live read: YNAB may have merged the placeholder with a bank import since the last
+      // sync. Then nothing is written; the txn is cached and a "check it in YNAB" review is opened.
+      const p = await livePlaceholder(ctx, row, "updated");
+      if (!p) return c.json(respond(API.updateIntent.res, { intent: await intentDto(b.db, b.userId, id, b.today) }));
       const ls = await getLinesOf(b.db, id);
       const largest = [...ls].sort((x, y) => y.amount - x.amount || x.idx - y.idx)[0];
       const amt = nudged(total, approximate, ctx.currency.decimalDigits);
+      const tag = memoTag(row.shortRef);
+      // Replace the memo only while it is still the one createPlaceholder wrote; text the user added is kept.
+      const ours = mergeMemo(null, `${row.approximate ? APPROX_PREFIX : ""}${row.memo ?? lines.map((l) => l.description).join(", ")}`, tag);
       const text = set.memo ?? ls.map((l) => l.description).join(", ");
+      const memo = (p.memo ?? "").trim() === ours ? mergeMemo(null, `${approximate ? APPROX_PREFIX : ""}${text}`, tag) : undefined;
       const res = await ctx.client.updateTransactions(b.planId, [{
         id: row.placeholderTxnId, amount: toYnabAmount(amt, row.direction), date: minDate(date, b.today),
         ...(largest ? { categoryId: largest.categoryId } : {}),
-        memo: mergeMemo(null, `${approximate ? APPROX_PREFIX : ""}${text}`, memoTag(row.shortRef)),
+        ...(memo !== undefined ? { memo } : {}),
       }]);
       await runBatch(b.db, [
         ...upsertTxnsStmts(b.db, b.userId, b.planId, res, now),
@@ -289,9 +302,10 @@ intentRoutes.post("/intents/:id/extend", validate("json", ExtendIntentReq), asyn
 // ── DELETE /api/intents/:id (cancel; also the stale "Delete" action) ────────────
 
 intentRoutes.delete("/intents/:id", async (c) => {
-  const b = await base(c);
   const id = c.req.param("id");
-  const row = await requireIntent(b.db, b.userId, id);
+  const b0 = await base(c);
+  const row = await requireIntent(b0.db, b0.userId, id);
+  const b = forIntent(b0, row);
   if (!isOpen(row.status)) throw new AppError("conflict", "This intent is already closed");
   const stale = row.expiresOn < b.today;
   let refused = false;
@@ -313,20 +327,40 @@ intentRoutes.delete("/intents/:id", async (c) => {
 // ── POST /api/intents/:id/keep ("Keep as final") ────────────────────────────────
 
 intentRoutes.post("/intents/:id/keep", async (c) => {
-  const b = await base(c);
   const id = c.req.param("id");
-  const row = await requireIntent(b.db, b.userId, id);
+  const b0 = await base(c);
+  const row = await requireIntent(b0.db, b0.userId, id);
+  const b = forIntent(b0, row);
   if (!isOpen(row.status) || row.placeholderStatus !== "created" || !row.placeholderTxnId) {
     throw new AppError("conflict", "Only an open intent with a placeholder can be kept as final");
   }
   const ctx = await engineCtx(c, b);
-  const t = await loadTxn(ctx, row.placeholderTxnId);
-  const memo = stripApprox(t?.memo ?? null) ?? mergeMemo(null, row.memo, memoTag(row.shortRef));
-  const res = await ctx.client.updateTransactions(b.planId, [{ id: row.placeholderTxnId, memo }]);
+  const t = await livePlaceholder(ctx, row, "kept as final");
+  if (!t) throw new AppError("conflict", "The placeholder was changed or deleted in YNAB, so it was left alone. Check it in YNAB.");
+  // The placeholder becomes the final entry (§10.7, like createPlaceholder's final path): the un-nudged
+  // total of the open lines, split across their categories when there is more than one.
+  const open = (await getLinesOf(b.db, id)).filter((l) => l.status === "open");
+  const total = open.reduce((s, l) => s + l.amount, 0);
+  const multi = new Set(open.map((l) => l.categoryId)).size > 1;
+  const memo = stripApprox(t.memo) ?? mergeMemo(null, row.memo, memoTag(row.shortRef));
+  const u: TxnUpdate = { id: row.placeholderTxnId, memo };
+  if (total > 0) {
+    u.amount = toYnabAmount(total, row.direction);
+    if (multi) {
+      u.categoryId = null;
+      u.subtransactions = allocate(total, open, row.direction, ctx.currency.decimalDigits)
+        .map((a) => ({ amount: a.amount, categoryId: a.categoryId, memo: a.memo }));
+    } else if (open[0]) {
+      u.categoryId = open[0].categoryId;
+    }
+  }
+  const res = await ctx.client.updateTransactions(b.planId, [u]);
   const now = Date.now();
   await runBatch(b.db, [
     ...upsertTxnsStmts(b.db, b.userId, b.planId, res, now),
-    b.db.update(intents).set({ placeholderStatus: "final", status: "resolved", resolvedAt: now, updatedAt: now }).where(eq(intents.id, id)),
+    b.db.update(intents).set({
+      placeholderStatus: "final", placeholderAmount: total > 0 ? total : row.placeholderAmount, status: "resolved", resolvedAt: now, updatedAt: now,
+    }).where(eq(intents.id, id)),
     b.db.update(intentLines).set({ status: "matched", matchedTxnId: row.placeholderTxnId })
       .where(and(eq(intentLines.intentId, id), eq(intentLines.status, "open"))),
     auditStmt(b.db, { userId: b.userId, actor: "user", action: "intent_kept_final", intentId: id, ynabTxnId: row.placeholderTxnId, summary: `${row.payee} kept as final` }, now),
@@ -338,9 +372,10 @@ intentRoutes.post("/intents/:id/keep", async (c) => {
 // ── GET /api/intents/:id/candidates ────────────────────────────────────────────
 
 intentRoutes.get("/intents/:id/candidates", async (c) => {
-  const b = await base(c);
   const id = c.req.param("id");
-  const row = await requireIntent(b.db, b.userId, id);
+  const b0 = await base(c);
+  const row = await requireIntent(b0.db, b0.userId, id);
+  const b = forIntent(b0, row);
   const di = toDIntent(row, await getLinesOf(b.db, id));
   const excluded = await excludedTxnIds(b.db, b.userId, b.planId);
   const txns = await getCachedTxns(b.db, b.userId, b.planId, { sinceDate: addDays(b.today, -CANDIDATE_DAYS) });
@@ -358,9 +393,10 @@ intentRoutes.get("/intents/:id/candidates", async (c) => {
 
 intentRoutes.post("/intents/:id/link", validate("json", LinkIntentReq), async (c) => {
   const { transactionId, lineIds } = c.req.valid("json");
-  const b = await base(c);
   const id = c.req.param("id");
-  const row = await requireIntent(b.db, b.userId, id);
+  const b0 = await base(c);
+  const row = await requireIntent(b0.db, b0.userId, id);
+  const b = forIntent(b0, row);
   if (!isOpen(row.status)) throw new AppError("conflict", "This intent is already closed");
   // Checked first (§7): placeholders of any intent, live matches and open-review txns.
   if ((await excludedTxnIds(b.db, b.userId, b.planId)).has(transactionId)) {

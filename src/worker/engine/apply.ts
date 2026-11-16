@@ -30,6 +30,13 @@ export async function loadTxn(ctx: EngineCtx, txnId: string): Promise<YnabTxn | 
   return ctx.client.getTransaction(ctx.planId, txnId);
 }
 
+/** A live read of one txn, written through to the cache. */
+async function liveTxn(ctx: EngineCtx, txnId: string, now: number): Promise<YnabTxn | null> {
+  const t = await ctx.client.getTransaction(ctx.planId, txnId);
+  if (t) await runBatch(ctx.db, upsertTxnsStmts(ctx.db, ctx.userId, ctx.planId, [t], now));
+  return t;
+}
+
 /** Inserts the `planned` match row; the partial unique index rejects a txn that is already planned/applied. */
 async function insertPlanned(ctx: EngineCtx, m: MatchInput, now: number): Promise<string> {
   const id = newId();
@@ -75,7 +82,10 @@ async function applyPlanned(ctx: EngineCtx, m: MatchInput, matchId: string, now:
   if (chosen.length !== m.lineIds.length) throw new AppError("validation", "Unknown line for this intent");
   if (chosen.some((l) => l.status !== "open")) throw new AppError("conflict", "A line of this intent is already matched");
 
-  const t = await loadTxn(ctx, m.txnId);
+  // Interactive kinds and splits act on a live read: the cache can be hours old (cron every 6 h) and the user
+  // may have split or recategorized the txn in YNAB since, which decides split_conflict vs. a normal write.
+  const live = m.kind === "manual" || m.kind === "review" || m.allocation.length > 1;
+  const t = live ? await liveTxn(ctx, m.txnId, now) : await loadTxn(ctx, m.txnId);
   if (!t || t.deleted) throw new AppError("not_found", "Transaction not found in YNAB");
   const allocSum = m.allocation.reduce((s, a) => s + a.amount, 0);
   if (allocSum !== t.amount) throw new AppError("validation", "Allocation does not add up to the transaction amount");
@@ -87,7 +97,8 @@ async function applyPlanned(ctx: EngineCtx, m: MatchInput, matchId: string, now:
   const u: TxnUpdate = { id: t.id };
   if (memo !== (t.memo ?? "")) u.memo = memo;
   if (t.flagColor === null && settings.flagColor !== null) u.flagColor = settings.flagColor satisfies FlagColor;
-  const confident = m.kind === "manual" || m.kind === "review" || m.kind === "ynab_auto" || (m.score ?? 0) >= AUTO;
+  // §10.9: only user-confirmed kinds or a strong score. ynab_auto has no score (YNAB matched on amount alone).
+  const confident = m.kind === "manual" || m.kind === "review" || (m.score ?? 0) >= AUTO;
   const approve = settings.autoApproveMatches && confident && !t.approved;
   if (approve) u.approved = true;
 

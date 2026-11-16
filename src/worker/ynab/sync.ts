@@ -1,7 +1,7 @@
 // ynab/sync.ts — WP3 (DESIGN §8.3, §10.11 "Sync details").
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, type SQL } from "drizzle-orm";
 import { addDays, todayIn } from "../../shared/dates";
-import { syncState, ynabAccounts, ynabCategories, ynabCategoryGroups, ynabPayees, ynabTransactions } from "../db/schema";
+import { intents, matches, syncState, ynabAccounts, ynabCategories, ynabCategoryGroups, ynabPayees, ynabTransactions } from "../db/schema";
 import type { BatchItem, DB } from "../env";
 import { upsertCatalogStmts, upsertTxnsStmts } from "./cache";
 import type { YnabClient } from "./client";
@@ -22,6 +22,34 @@ async function runBatches(db: DB, stmts: BatchItem<"sqlite">[]): Promise<void> {
     const [first, ...rest] = part;
     if (first) await db.batch([first, ...rest]);
   }
+}
+
+/** Cached txns that must survive any prune or cache reset: placeholders of open intents and the txns matched to
+ *  open intents. The planner reads a placeholder missing from the cache as "the user deleted it". */
+export async function protectedTxnIds(db: DB, userId: string, planId: string): Promise<Set<string>> {
+  const keep = new Set<string>();
+  const openRows = await db.select({ id: intents.id, ph: intents.placeholderTxnId }).from(intents)
+    .where(and(eq(intents.userId, userId), eq(intents.planId, planId), inArray(intents.status, ["pending", "partial", "review"]))).all();
+  for (const r of openRows) if (r.ph) keep.add(r.ph);
+  const openIds = openRows.map((r) => r.id);
+  for (let k = 0; k < openIds.length; k += 90) {
+    const ms = await db.select({ id: matches.ynabTxnId }).from(matches).where(inArray(matches.intentId, openIds.slice(k, k + 90))).all();
+    for (const m of ms) keep.add(m.id);
+  }
+  return keep;
+}
+
+/** Statements deleting the plan's cached txns that match `where` (null: all), except `keep`. */
+export async function pruneTxnStmts(db: DB, userId: string, planId: string, where: SQL | null, keep: Set<string>): Promise<BatchItem<"sqlite">[]> {
+  const scope = and(eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId), ...(where ? [where] : []));
+  if (keep.size === 0) return [db.delete(ynabTransactions).where(scope)];
+  const ids = await db.select({ id: ynabTransactions.id }).from(ynabTransactions).where(scope).all();
+  const drop = ids.map((r) => r.id).filter((id) => !keep.has(id));
+  const out: BatchItem<"sqlite">[] = [];
+  for (let k = 0; k < drop.length; k += 90) {
+    out.push(db.delete(ynabTransactions).where(and(eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId), inArray(ynabTransactions.id, drop.slice(k, k + 90)))));
+  }
+  return out;
 }
 
 function deltaIds(txns: YnabTxn[]): Pick<SyncDelta, "changedTxnIds" | "deletedTxnIds"> {
@@ -53,8 +81,8 @@ export async function syncPlan(env: Env, db: DB, client: YnabClient, userId: str
     const k = Math.min(cats.serverKnowledge, accts.serverKnowledge, payees.serverKnowledge, txns.serverKnowledge);
 
     const stmts: BatchItem<"sqlite">[] = [
-      // A (re)initialised plan starts from a clean cache.
-      db.delete(ynabTransactions).where(and(eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId))),
+      // A (re)initialised plan starts from a clean cache, except the txns open intents depend on.
+      ...(await pruneTxnStmts(db, userId, planId, null, await protectedTxnIds(db, userId, planId))),
       db.delete(ynabCategories).where(and(eq(ynabCategories.userId, userId), eq(ynabCategories.planId, planId))),
       db.delete(ynabCategoryGroups).where(and(eq(ynabCategoryGroups.userId, userId), eq(ynabCategoryGroups.planId, planId))),
       db.delete(ynabAccounts).where(and(eq(ynabAccounts.userId, userId), eq(ynabAccounts.planId, planId))),
@@ -82,7 +110,9 @@ export async function syncPlan(env: Env, db: DB, client: YnabClient, userId: str
       .where(and(eq(ynabPayees.userId, userId), inArray(ynabPayees.id, toLookup.slice(i, i + 90)))).all();
     for (const r of rows) names.set(r.id, r.name);
   }
-  // A changed parent whose subtransactions did not change arrives without them: keep a cached split flag.
+  // A changed parent whose subtransactions did not change arrives without them: keep a cached split flag,
+  // unless the delta shows all its subtransactions deleted (the user un-split it in YNAB).
+  const unsplit = new Set(d.unsplitTxnIds ?? []);
   const ids = d.transactions.map((t) => t.id);
   const cachedSplit = new Set<string>();
   for (let i = 0; i < ids.length; i += 90) {
@@ -93,14 +123,12 @@ export async function syncPlan(env: Env, db: DB, client: YnabClient, userId: str
   const txns = d.transactions.map((t): YnabTxn => ({
     ...t,
     payeeName: t.payeeName ?? (t.payeeId ? (names.get(t.payeeId) ?? null) : null),
-    isSplit: t.isSplit || cachedSplit.has(t.id),
+    isSplit: t.isSplit || (cachedSplit.has(t.id) && !unsplit.has(t.id)),
   }));
 
   const stmts: BatchItem<"sqlite">[] = [
     // Prune first: an old txn that changed in this delta is still upserted and goes in a later prune.
-    db.delete(ynabTransactions).where(and(
-      eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId), lt(ynabTransactions.date, addDays(today, -PRUNE_AFTER_DAYS)),
-    )),
+    ...(await pruneTxnStmts(db, userId, planId, lt(ynabTransactions.date, addDays(today, -PRUNE_AFTER_DAYS)), await protectedTxnIds(db, userId, planId))),
     ...upsertCatalogStmts(db, userId, planId, { groups: d.categoryGroups, categories: d.categories, accounts: d.accounts, payees: d.payees }, { keepSortIndex: true }),
     ...upsertTxnsStmts(db, userId, planId, txns, now),
   ];

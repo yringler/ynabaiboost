@@ -1,5 +1,5 @@
 // engine/reconcile.ts — WP5 (DESIGN §8.5, §10.9). Executes planner decisions; countOpen; pruning.
-import { and, desc, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { addDays } from "../../shared/dates";
 import { Allocation, type CurrencyFormat, type ReviewOption, type Settings } from "../../shared/schemas";
 import { auditLog, intentLines, intents, matches, reviews, sessions, ynabTransactions } from "../db/schema";
@@ -11,7 +11,7 @@ import type { Actor, DB } from "../env";
 import { AppError } from "../lib/errors";
 import { newId } from "../lib/ids";
 import type { YnabClient } from "../ynab/client";
-import type { SyncDelta } from "../ynab/sync";
+import { protectedTxnIds, pruneTxnStmts, type SyncDelta } from "../ynab/sync";
 import { afterMatch, applyMatch, loadTxn, type MatchKind } from "./apply";
 import { loadReconcileInput } from "./load";
 import { upsertOpenReview } from "./reviews";
@@ -188,25 +188,7 @@ async function prune(ctx: EngineCtx, now: number): Promise<void> {
     lt(sql`COALESCE(${intents.resolvedAt}, ${intents.updatedAt})`, now - 90 * DAY_MS),
   ));
   await db.delete(auditLog).where(and(eq(auditLog.userId, userId), lt(auditLog.at, now - 180 * DAY_MS)));
-  const keep = new Set<string>();
-  const openRows = await db.select({ id: intents.id, ph: intents.placeholderTxnId }).from(intents)
-    .where(and(eq(intents.userId, userId), eq(intents.planId, planId), inArray(intents.status, [...OPEN_STATUSES]))).all();
-  for (const r of openRows) if (r.ph) keep.add(r.ph);
-  const openIds = openRows.map((r) => r.id);
-  for (let k = 0; k < openIds.length; k += 90) {
-    const ms = await db.select({ id: matches.ynabTxnId }).from(matches).where(inArray(matches.intentId, openIds.slice(k, k + 90))).all();
-    for (const m of ms) keep.add(m.id);
-  }
-  const old = and(eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId), lt(ynabTransactions.date, addDays(ctx.today, -120)));
-  const keepIds = [...keep];
-  if (keepIds.length <= 90) {
-    await db.delete(ynabTransactions).where(keepIds.length ? and(old, notInArray(ynabTransactions.id, keepIds)) : old);
-  } else {
-    const ids = await db.select({ id: ynabTransactions.id }).from(ynabTransactions).where(old).all();
-    const drop = ids.map((r) => r.id).filter((id) => !keep.has(id));
-    for (let k = 0; k < drop.length; k += 90) {
-      await db.delete(ynabTransactions).where(and(eq(ynabTransactions.userId, userId), inArray(ynabTransactions.id, drop.slice(k, k + 90))));
-    }
-  }
+  const old = lt(ynabTransactions.date, addDays(ctx.today, -120));
+  await runBatch(db, await pruneTxnStmts(db, userId, planId, old, await protectedTxnIds(db, userId, planId)));
   await db.delete(sessions).where(and(eq(sessions.userId, userId), lt(sessions.expiresAt, now)));
 }

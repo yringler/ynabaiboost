@@ -27,13 +27,15 @@ export function safeTodayIn(tz: string, now: Date = new Date()): string {
 export async function parseUtterance(ctx: AiCtx, text: string): Promise<z.infer<typeof ParseRes>> {
   const { db, userId, planId, settings } = ctx;
   const client = await getClaude(ctx.env, db, userId);       // consent + key first: no cache reads if missing
-  const [categories, accounts, topPayees, allPayees, currencyRow] = await Promise.all([
+  const [categories, allAccounts, topPayees, allPayees, currencyRow] = await Promise.all([
     getSelectableCategories(db, userId, planId),
     getAccounts(db, userId, planId),
     getTopPayees(db, userId, planId, CATALOG_PAYEES),
     getAllPayees(db, userId, planId),
     getCurrency(db, userId, planId),
   ]);
+  // Intents are spending on budget accounts only: tracking accounts take no categories (the SPA hides them too).
+  const accounts = allAccounts.filter((a) => a.onBudget);
   const currency = { isoCode: currencyRow.isoCode, decimalDigits: currencyRow.decimalDigits };
   const catalog = renderCatalog({ categories, accounts, payees: topPayees });
   const today = safeTodayIn(settings.timezone);

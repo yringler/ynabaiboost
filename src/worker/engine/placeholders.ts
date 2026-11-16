@@ -62,53 +62,108 @@ export async function createPlaceholder(ctx: EngineCtx, intentId: string): Promi
   const tag = memoTag(intent.shortRef);
   const text = intent.memo ?? descriptions(lines);
 
+  if (acct && !acct.onBudget) {
+    // Tracking accounts take no categories (YNAB rejects the write): never pin a placeholder there.
+    await db.update(intents).set({ placeholderStatus: "none", updatedAt: now }).where(eq(intents.id, intentId));
+    return { ok: false, kind: "none", warning: `${intent.payee}: ${acct.name} is a tracking account – placeholder skipped` };
+  }
+
+  // YNAB first. Its failure is the only case where nothing exists in YNAB and 'failed' is the truth.
+  let created: YnabTxn;
+  let final: boolean;
+  let amt: number;
   try {
     if (!linked) {
       const multi = new Set(lines.map((l) => l.categoryId)).size > 1;
       const subs = multi
         ? allocate(intent.totalAmount, lines, intent.direction, ctx.currency.decimalDigits).map((a) => ({ amount: a.amount, categoryId: a.categoryId, memo: a.memo }))
         : undefined;
-      const created = await createWithDateRetry(ctx, {
+      created = await createWithDateRetry(ctx, {
         accountId: account, date, amount: toYnabAmount(intent.totalAmount, intent.direction), ...payee,
         categoryId: multi ? null : cat, memo: mergeMemo(null, text, tag), approved: true, flagColor: settings.flagColor,
         ...(subs ? { subtransactions: subs } : {}),
       });
-      await runBatch(db, [
-        ...upsertTxnsStmts(db, userId, planId, [created], now),
-        db.update(intents).set({
-          placeholderTxnId: created.id, placeholderAmount: intent.totalAmount, placeholderStatus: "final",
-          accountId: intent.accountId ?? account, status: "resolved", resolvedAt: now, updatedAt: now,
-        }).where(eq(intents.id, intentId)),
-        db.update(intentLines).set({ status: "matched", matchedTxnId: created.id }).where(eq(intentLines.intentId, intentId)),
-        auditStmt(db, {
-          userId, actor: ctx.actor, action: "final_entry_created", intentId, ynabTxnId: created.id,
-          summary: `Recorded ${intent.payee} ${fmtAmount(intent.totalAmount, ctx.currency.decimalDigits)} (no bank import on this account)`,
-        }, now),
-      ]);
-      return { ok: true, kind: "final", warning: null };
+      final = true;
+      amt = intent.totalAmount;
+    } else {
+      amt = nudged(intent.totalAmount, intent.approximate, ctx.currency.decimalDigits);
+      created = await createWithDateRetry(ctx, {
+        accountId: account, date, amount: toYnabAmount(amt, intent.direction), ...payee, categoryId: cat,
+        memo: mergeMemo(null, `${intent.approximate ? APPROX_PREFIX : ""}${text}`, tag), approved: true, flagColor: settings.flagColor,
+      });
+      final = false;
     }
-
-    const amt = nudged(intent.totalAmount, intent.approximate, ctx.currency.decimalDigits);
-    const created = await createWithDateRetry(ctx, {
-      accountId: account, date, amount: toYnabAmount(amt, intent.direction), ...payee, categoryId: cat,
-      memo: mergeMemo(null, `${intent.approximate ? APPROX_PREFIX : ""}${text}`, tag), approved: true, flagColor: settings.flagColor,
-    });
-    await runBatch(db, [
-      ...upsertTxnsStmts(db, userId, planId, [created], now),
-      db.update(intents).set({
-        placeholderTxnId: created.id, placeholderAmount: amt, placeholderStatus: "created", updatedAt: now,
-      }).where(eq(intents.id, intentId)),
-      auditStmt(db, {
-        userId, actor: ctx.actor, action: "placeholder_created", intentId, ynabTxnId: created.id,
-        summary: `Placeholder ${intent.payee} ${fmtAmount(amt, ctx.currency.decimalDigits)}`,
-      }, now),
-    ]);
-    return { ok: true, kind: "placeholder", warning: null };
   } catch (e) {
     await db.update(intents).set({ placeholderStatus: "failed", updatedAt: now }).where(eq(intents.id, intentId));
     const why = e instanceof AppError ? e.message : "unexpected error";
     return { ok: false, kind: linked ? "placeholder" : "final", warning: `${intent.payee}: placeholder could not be created (${why})` };
   }
+
+  // The txn exists in YNAB now: its id must reach D1, or nothing would ever clean it up (double count).
+  const intentSet = final
+    ? { placeholderTxnId: created.id, placeholderAmount: amt, placeholderStatus: "final" as const,
+        accountId: intent.accountId ?? account, status: "resolved" as const, resolvedAt: now, updatedAt: now }
+    : { placeholderTxnId: created.id, placeholderAmount: amt, placeholderStatus: "created" as const, updatedAt: now };
+  try {
+    await runBatch(db, [
+      ...upsertTxnsStmts(db, userId, planId, [created], now),
+      db.update(intents).set(intentSet).where(eq(intents.id, intentId)),
+      ...(final ? [db.update(intentLines).set({ status: "matched", matchedTxnId: created.id }).where(eq(intentLines.intentId, intentId))] : []),
+      auditStmt(db, final
+        ? {
+          userId, actor: ctx.actor, action: "final_entry_created", intentId, ynabTxnId: created.id,
+          summary: `Recorded ${intent.payee} ${fmtAmount(intent.totalAmount, ctx.currency.decimalDigits)} (no bank import on this account)`,
+        }
+        : {
+          userId, actor: ctx.actor, action: "placeholder_created", intentId, ynabTxnId: created.id,
+          summary: `Placeholder ${intent.payee} ${fmtAmount(amt, ctx.currency.decimalDigits)}`,
+        }, now),
+    ]);
+  } catch {
+    // Minimal write of the id (the cache row and audit are not needed for safety). If even that fails,
+    // undo the YNAB create: the txn is brand new and untouched, so deleting it is safe.
+    try {
+      await db.update(intents).set(intentSet).where(eq(intents.id, intentId));
+      if (final) await db.update(intentLines).set({ status: "matched", matchedTxnId: created.id }).where(eq(intentLines.intentId, intentId));
+    } catch {
+      await ctx.client.deleteTransaction(planId, created.id).catch(() => undefined);
+      return { ok: false, kind: final ? "final" : "placeholder", warning: `${intent.payee}: placeholder could not be saved (database error)` };
+    }
+  }
+  return { ok: true, kind: final ? "final" : "placeholder", warning: null };
+}
+
+/** The live placeholder when it is still ours to write (§10.7 guard), else null. On null, the cause is already
+ *  handled: a deleted placeholder becomes 'missing'; a matched or edited one is cached, audited and (unless
+ *  `review` is false) gets a ynab_matched_other review. Never write amount/date/memo to a txn this rejects. */
+export async function livePlaceholder(ctx: EngineCtx, intent: IntentRow, what: string, review = true): Promise<YnabTxn | null> {
+  const { db, userId, planId } = ctx;
+  if (intent.placeholderStatus !== "created" || !intent.placeholderTxnId) return null;
+  const now = Date.now();
+  const p = await ctx.client.getTransaction(planId, intent.placeholderTxnId);
+  if (p === null || p.deleted) {
+    // The user deleted it in YNAB (§10.7 placeholder_missing).
+    await runBatch(db, [
+      ...(p ? upsertTxnsStmts(db, userId, planId, [p], now) : []),
+      db.update(intents).set({ placeholderStatus: "missing", updatedAt: now }).where(eq(intents.id, intent.id)),
+    ]);
+    return null;
+  }
+  if (isUntouchedPlaceholder(p, intent)) return p;
+  await runBatch(db, [
+    ...upsertTxnsStmts(db, userId, planId, [p], now),
+    auditStmt(db, {
+      userId, actor: ctx.actor, action: "placeholder_delete_refused", intentId: intent.id, ynabTxnId: p.id,
+      summary: `Placeholder for ${intent.payee} was changed in YNAB (likely matched to a bank import); not ${what}`,
+    }, now),
+  ]);
+  if (review) {
+    await upsertOpenReview(ctx, {
+      intentId: intent.id, txnId: p.id, kind: "ynab_matched_other", options: [],
+      summary: `The placeholder for ${intent.payee} was matched or edited in YNAB, so it was not ${what}. Check it in YNAB.`,
+    }, now);
+  }
+  return null;
 }
 
 /** Re-applies the D13 nudge. Also moves the placeholder to the largest remaining line's category. */
@@ -120,6 +175,8 @@ export async function updatePlaceholderAmount(ctx: EngineCtx, intentId: string, 
   const approximate = intent.approximate || open.some((l) => l.approximate);
   const amt = nudged(remaining, approximate, ctx.currency.decimalDigits);
   const cat = largestLine(open)?.categoryId;
+  // Live guard: YNAB may have merged the placeholder with a real import since the last sync.
+  if (!(await livePlaceholder(ctx, intent, "re-amounted"))) return;
   const now = Date.now();
   const res = await ctx.client.updateTransactions(planId, [{
     id: intent.placeholderTxnId, amount: toYnabAmount(amt, intent.direction), ...(cat ? { categoryId: cat } : {}),

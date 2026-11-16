@@ -13,7 +13,7 @@ import { addDays } from "../../shared/dates";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Category, InboxItem, InboxSuggestion } from "../../shared/schemas";
 import { getSettings } from "../auth/settings";
-import { inboxSuggestions, ynabCategories, ynabCategoryGroups, ynabTransactions } from "../db/schema";
+import { inboxSuggestions, ynabAccounts, ynabCategories, ynabCategoryGroups, ynabTransactions } from "../db/schema";
 import type { DB } from "../env";
 import { excludedTxnIds, possibleIntentFor } from "../engine/load";
 import { AppError } from "../lib/errors";
@@ -93,6 +93,9 @@ export async function selectInbox(db: DB, userId: string, planId: string, today:
       eq(ynabTransactions.userId, userId), eq(ynabTransactions.planId, planId),
       eq(ynabTransactions.deleted, false), isNull(ynabTransactions.transferAccountId), eq(ynabTransactions.isSplit, false),
       gte(ynabTransactions.date, since),
+      // Tracking (off-budget) accounts take no categories: their txns never belong in the inbox.
+      sql`NOT EXISTS (SELECT 1 FROM ${ynabAccounts} WHERE ${ynabAccounts.userId} = ${ynabTransactions.userId}
+        AND ${ynabAccounts.id} = ${ynabTransactions.accountId} AND ${ynabAccounts.onBudget} = 0)`,
       or(eq(ynabTransactions.approved, false), isNull(ynabTransactions.categoryId), uncatSql),
     ))
     .orderBy(desc(ynabTransactions.date), ynabTransactions.id)

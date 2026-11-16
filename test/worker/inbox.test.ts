@@ -9,7 +9,7 @@ import type { InboxItem, PossibleIntent } from "../../src/shared/schemas";
 import type * as InboxModule from "../../src/worker/ai/inbox";
 import { deleteSecrets, putSecret } from "../../src/worker/auth/secrets";
 import { getSettings, updateSettings } from "../../src/worker/auth/settings";
-import { auditLog, inboxSuggestions, ynabTransactions } from "../../src/worker/db/schema";
+import { auditLog, inboxSuggestions, ynabAccounts, ynabTransactions } from "../../src/worker/db/schema";
 import { getSelectableCategories } from "../../src/worker/ynab/cache";
 import { createYnabClientForToken } from "../../src/worker/ynab/client";
 import { syncPlan } from "../../src/worker/ynab/sync";
@@ -265,6 +265,24 @@ describe("routes", () => {
     const s = await db().select().from(inboxSuggestions).where(and(eq(inboxSuggestions.userId, user), eq(inboxSuggestions.ynabTxnId, "t-sbux-2"))).get();
     expect(s?.status).toBe("applied");
     expect(byId(await listInbox(await aiCtx())).has("t-sbux-2")).toBe(false);
+  });
+
+  it("tracking (off-budget) account txns never reach the inbox and are refused by approve (review fix)", async () => {
+    await db().insert(ynabAccounts).values({ userId: user, planId: PLAN_ID, id: "acc-401k", name: "401k", type: "otherAsset", onBudget: false });
+    await db().insert(ynabTransactions).values({
+      userId: user, planId: PLAN_ID, id: "t-401k", date: d(-1), amount: 500_000, payeeId: null, payeeName: "Vanguard", importPayeeName: "VANGUARD",
+      importPayeeNameOriginal: null, accountId: "acc-401k", categoryId: null, memo: null, cleared: "cleared", approved: false, flagColor: null,
+      importId: "YNAB:500000:1", matchedTransactionId: null, transferAccountId: null, isSplit: false, deleted: false, updatedAt: Date.now(),
+    });
+    expect(byId(await listInbox(await aiCtx())).has("t-401k")).toBe(false);
+    const res = await call(E, "POST", "/api/inbox/approve", { cookie, body: { items: [
+      { transactionId: "t-401k", categoryId: "c-groceries" }, { transactionId: "t-sbux-2", categoryId: "c-dining" },
+    ] } });
+    const body = await res.json<{ approved: number; failed: { transactionId: string }[] }>();
+    expect(body.approved).toBe(1);
+    expect(body.failed.map((f) => f.transactionId)).toEqual(["t-401k"]);
+    const patches = ynab.requests.filter((r) => r.method === "PATCH");
+    expect(JSON.stringify(patches[0]?.body)).not.toContain("t-401k");
   });
 
   it("POST /api/inbox/approve with only bad items makes no YNAB call", async () => {

@@ -14,7 +14,7 @@ import { excludedTxnIds } from "../engine/load";
 import { auditStmt, toSnapshot } from "../lib/audit";
 import { AppError } from "../lib/errors";
 import { validate } from "../lib/validate";
-import { getCachedTxns, getCurrency, getSelectableCategories, upsertTxnsStmts } from "../ynab/cache";
+import { getAccounts, getCachedTxns, getCurrency, getSelectableCategories, upsertTxnsStmts } from "../ynab/cache";
 import { createYnabClient } from "../ynab/client";
 import type { TxnUpdate, YnabTxn } from "../ynab/types";
 
@@ -63,12 +63,14 @@ inboxRoutes.post("/inbox/approve", validate("json", API.inboxApprove.req), async
   for (const it of items) wanted.set(it.transactionId, it.categoryId);
   const ids = [...wanted.keys()];
 
-  const [excluded, cached, categories, currency] = await Promise.all([
+  const [excluded, cached, categories, currency, accounts] = await Promise.all([
     excludedTxnIds(db, userId, planId),
     getCachedTxns(db, userId, planId, { ids }),
     getSelectableCategories(db, userId, planId),
     getCurrency(db, userId, planId),
+    getAccounts(db, userId, planId),
   ]);
+  const offBudget = new Set(accounts.filter((a) => !a.onBudget).map((a) => a.id));
   const cachedById = new Map(cached.map((t) => [t.id, t]));
   const categoriesById = new Map(categories.map((x) => [x.id, x]));
 
@@ -81,6 +83,7 @@ inboxRoutes.post("/inbox/approve", validate("json", API.inboxApprove.req), async
       : excluded.has(id) ? "This transaction is linked to an intent or a review"
       : t.isSplit ? "Split transactions can only be edited in YNAB"
       : t.transferAccountId !== null ? "Transfers have no category"
+      : offBudget.has(t.accountId) ? "Tracking account transactions have no category"
       : !categoriesById.has(categoryId) ? "That category is not available"
       : null;
     if (reason !== null || !t) {
