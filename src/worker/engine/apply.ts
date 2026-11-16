@@ -84,7 +84,8 @@ async function applyPlanned(ctx: EngineCtx, m: MatchInput, matchId: string, now:
 
   // Interactive kinds and splits act on a live read: the cache can be hours old (cron every 6 h) and the user
   // may have split or recategorized the txn in YNAB since, which decides split_conflict vs. a normal write.
-  const live = m.kind === "manual" || m.kind === "review" || m.allocation.length > 1;
+  // Amazon subset matches (§10.6a may auto-apply several charges in a row) are always re-read live as well.
+  const live = m.kind === "manual" || m.kind === "review" || m.kind === "amazon_subset" || m.allocation.length > 1;
   const t = live ? await liveTxn(ctx, m.txnId, now) : await loadTxn(ctx, m.txnId);
   if (!t || t.deleted) throw new AppError("not_found", "Transaction not found in YNAB");
   const allocSum = m.allocation.reduce((s, a) => s + a.amount, 0);

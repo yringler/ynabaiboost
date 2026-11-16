@@ -52,6 +52,7 @@ function makeIntent(id: string, payee: string, total: number, lines: { d: string
     id, shortRef: id.toUpperCase().slice(-6).padStart(6, "X"), status: "pending", isStale: false, rawText: `${payee} about ${total / 1000}`,
     payee, payeeId: null, merchantKind: "in_person", direction: "outflow", date: today, accountId: null, accountExplicit: false,
     totalAmount: total, tolerance: 20_000, approximate: true, memo: null,
+    precision: { level: "approximate", note: "The amount is approximate" },
     placeholder: { txnId: `ph-${id}`, status: "created", amount: total - 10 },
     expiresOn: addDays(today, 14), createdAt: now - HOUR, resolvedAt: null,
     lines: lines.map((l, i) => ({

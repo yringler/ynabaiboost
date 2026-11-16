@@ -5,6 +5,7 @@ import {
   IntentDraft, IntentLineDraft, InputMode, IsoDate, Me, Payee, ReviewItem, SettingsPatch,
   SettingsShape, SyncResult, TxnView,
 } from "./schemas";
+import { MAX_NOTE_CHARS } from "./precision";
 
 export const ErrorCode = z.enum([
   "unauthenticated", "forbidden", "not_allowed", "not_found", "validation", "conflict", "rate_limited",
@@ -28,8 +29,8 @@ const Ok = z.object({ ok: z.literal(true) });
 // requests
 export const PatLoginReq = z.object({ token: z.string().trim().min(20).max(200) });
 export const AnthropicKeyReq = z.object({ apiKey: z.string().trim().startsWith("sk-ant-").max(300) });
-export const ParseReq = z.object({ text: z.string().trim().min(1).max(2000), inputMode: InputMode });
-export const CreateIntentsReq = z.object({ intents: z.array(IntentCreate).min(1).max(10), rawText: z.string().max(2000), inputMode: InputMode });
+export const ParseReq = z.object({ text: z.string().trim().min(1).max(MAX_NOTE_CHARS), inputMode: InputMode });
+export const CreateIntentsReq = z.object({ intents: z.array(IntentCreate).min(1).max(10), rawText: z.string().max(MAX_NOTE_CHARS), inputMode: InputMode });
 export const UpdateIntentReq = z.object({
   payee: z.string().min(1).max(200).optional(), date: IsoDate.optional(),
   accountId: Id.nullable().optional(), totalAmount: z.int().positive().optional(),

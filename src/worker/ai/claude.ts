@@ -1,7 +1,8 @@
 // ai/claude.ts — WP4 (DESIGN §8.4, §9.1, §9.4).
-// One structured-output call per task: no tools, no agent loop. Opus 5.5 always thinks (never send
-// `thinking: {type:"disabled"}` or a budget) and rejects a forced tool_choice, so the JSON comes from
-// `output_config.format` (zod → JSON schema via the SDK helper) and is validated again here.
+// One structured-output call per task: no tools, no agent loop. Sonnet 5.5 rejects `thinking: {type:"disabled"}`,
+// thinking budgets, non-default sampling params and a forced tool_choice, so we send adaptive thinking (omitted)
+// with an explicit `output_config.effort` (the model defaults to "high"), and the JSON comes from
+// `output_config.format` (zod → JSON schema via the SDK helper), validated again here.
 //
 // Server-side refusal fallback: requests carry the `server-side-fallback-2026-07-01` beta with
 // `fallbacks: "default"`, so a policy decline is retried by the API on the model's default fallback inside the
@@ -17,7 +18,7 @@ import { getAnthropicKey } from "../auth/anthropicKey";
 import type { DB } from "../env";
 import { AppError } from "../lib/errors";
 
-export const CLAUDE_MODEL = "claude-opus-5-5";
+export const CLAUDE_MODEL = "claude-sonnet-5-5";
 export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 /** Via getAnthropicKey (throws ai_consent_required / anthropic_key_missing). Timeouts/retries are per call. */
@@ -90,7 +91,7 @@ export async function callStructured<T extends z.ZodType>(client: Anthropic, arg
       res = await client.beta.messages.create(
         {
           model: CLAUDE_MODEL,
-          max_tokens: maxTokens,                    // thinking is always on for Opus 5.5 and counts here
+          max_tokens: maxTokens,                    // adaptive thinking counts here too (Sonnet 5.5)
           betas: [FALLBACK_BETA],
           fallbacks: "default",
           output_config: { effort: args.effort, format: { type: "json_schema", schema: format.schema } },

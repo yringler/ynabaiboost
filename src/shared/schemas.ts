@@ -1,5 +1,6 @@
 // src/shared/schemas.ts
 import { z } from "zod";
+import { OrderFacts, PrecisionInfo } from "./precision";
 
 export const Id = z.string().min(1).max(64);
 export const IsoDate = z.iso.date();
@@ -103,6 +104,10 @@ export const IntentDraft = z.object({
   approximate: z.boolean(),
   memo: z.string().max(200).nullable(),
   lines: z.array(IntentLineDraft).min(1).max(20),
+  /** Facts Claude extracted (unverified; the Worker re-assesses them against rawText on create). */
+  facts: OrderFacts.nullable().optional(),
+  /** Display only (parse result); ignored by POST /api/intents. */
+  precision: PrecisionInfo.optional(),
 });
 export type IntentDraft = z.infer<typeof IntentDraft>;
 
@@ -131,6 +136,7 @@ export const Intent = z.object({
   rawText: z.string(), payee: z.string(), payeeId: Id.nullable(), merchantKind: MerchantKind,
   direction: DirectionSchema, date: IsoDate, accountId: Id.nullable(), accountExplicit: z.boolean(),
   totalAmount: Milli, tolerance: Milli, approximate: z.boolean(), memo: z.string().nullable(),
+  precision: PrecisionInfo,                     // deterministic (assessPrecision at create/edit)
   placeholder: z.object({ txnId: Id.nullable(), status: PlaceholderStatus, amount: Milli.nullable() }),
   expiresOn: IsoDate, createdAt: z.int(), resolvedAt: z.int().nullable(),
   lines: z.array(IntentLine),

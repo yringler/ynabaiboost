@@ -27,9 +27,9 @@ const initial = draftToState({
   ],
 }, 2, true);
 
-function Harness({ start = initial }: { start?: DraftState }) {
+function Harness({ start = initial, rawText }: { start?: DraftState; rawText?: string }) {
   const [d, setD] = useState(start);
-  return <DraftEditor draft={d} onChange={setD} catalog={catalog} placeholdersEnabled />;
+  return <DraftEditor draft={d} onChange={setD} catalog={catalog} placeholdersEnabled {...(rawText !== undefined ? { rawText } : {})} />;
 }
 
 afterEach(cleanup);
@@ -67,5 +67,28 @@ describe("DraftEditor", () => {
     const amounts = screen.getAllByLabelText("Item amount") as HTMLInputElement[];
     expect(amounts).toHaveLength(2);
     expect(amounts[0]?.value).toBe("35.00");
+  });
+
+  it("shows the deterministic precision chip and downgrades it live when an amount is edited", () => {
+    const page = "Phone case $20.00\nBook $15.00\nEstimated tax: $2.80\nGrand Total: $37.80";
+    const start: DraftState = {
+      ...draftToState({ ...{ payee: "Amazon", payeeId: "p1", merchantKind: "amazon", direction: "outflow", date: "2026-11-16", accountId: null,
+        accountExplicit: false, totalAmount: 37_800, approximate: false, memo: null }, lines: [
+        { description: "case", categoryId: "c1", amount: 20_000, approximate: false, confidence: null },
+        { description: "book", categoryId: "c2", amount: 15_000, approximate: false, confidence: null },
+      ] }, 2, true),
+      facts: { totalHasCents: true, lineAmounts: [20_000, 15_000], lineQuantities: [1, 1], itemSubtotal: null, tax: 2_800,
+        shipping: null, discount: null, giftCard: null, grandTotal: 37_800, shipments: [], clarityNote: null },
+    };
+    render(<Harness start={start} rawText={page} />);
+    expect(screen.getByTestId("precision-chip").textContent).toContain("Exact — will auto-match");
+    expect(screen.getByTestId("line-sum").className).toMatch(/text-ok/);      // items + tax = the order total
+    fireEvent.change(screen.getAllByLabelText("Item amount")[1] as HTMLElement, { target: { value: "16" } });
+    expect(screen.getByTestId("precision-chip").textContent).toContain("Approximate — may ask you");
+  });
+
+  it("without the note the chip says approximate", () => {
+    render(<Harness />);
+    expect(screen.getByTestId("precision-chip").textContent).toContain("Approximate");
   });
 });

@@ -12,7 +12,8 @@ import { dateWindow } from "../domain/dates";
 import { APPROX_PREFIX, memoTag, mergeMemo, stripApprox } from "../domain/memo";
 import { nudged } from "../domain/nudge";
 import { looseScore } from "../domain/score";
-import { computeTolerance } from "../domain/tolerance";
+import { toleranceFor } from "../domain/tolerance";
+import { assessPrecision, OrderFacts, precisionInfo, type PrecisionResult } from "../../shared/precision";
 import { applyMatch, loadTxn } from "../engine/apply";
 import { excludedTxnIds } from "../engine/load";
 import { createPlaceholder, livePlaceholder, safeDeletePlaceholder } from "../engine/placeholders";
@@ -43,6 +44,42 @@ const LIST_LIMIT = 200;
 
 interface Base { db: DB; userId: string; settings: Settings; planId: string; today: string }
 
+/** §9.5: the deterministic precision of an intent and the columns that store it. Facts are Claude's report;
+ *  only what assessPrecision verifies against the user's own text reaches order_plan. */
+function precisionColumns(
+  d: { merchantKind: string; totalAmount: number; approximate: boolean; lines: { amount: number; approximate: boolean }[] },
+  facts: OrderFacts | null, rawText: string, decimalDigits: number,
+): { p: PrecisionResult; totalTolerance: number; lineTolerance: (k: number) => number; lineExact: (k: number) => boolean;
+  cols: { precision: "exact" | "approximate"; precisionNote: string | null; orderFacts: string | null; orderPlan: string | null } } {
+  const p = assessPrecision({ ...d, facts }, rawText, decimalDigits);
+  const totalExact = p.totalExact || (p.plan !== null && p.plan.cardTotal === d.totalAmount);
+  const lineExact = (k: number) => p.linesExact[k] === true || (d.lines.length === 1 && totalExact);
+  return {
+    p,
+    totalTolerance: toleranceFor(d.totalAmount, d.approximate, totalExact, decimalDigits),
+    lineExact,
+    lineTolerance: (k) => {
+      const l = d.lines[k];
+      return l ? toleranceFor(l.amount, l.approximate, lineExact(k), decimalDigits) : 0;
+    },
+    cols: {
+      precision: p.level, precisionNote: precisionInfo(p).note,
+      orderFacts: facts ? JSON.stringify(facts) : null, orderPlan: p.plan ? JSON.stringify(p.plan) : null,
+    },
+  };
+}
+
+/** Stored facts JSON → OrderFacts, or null. */
+function storedFacts(json: string | null): OrderFacts | null {
+  if (json === null) return null;
+  try {
+    const r = OrderFacts.safeParse(JSON.parse(json));
+    return r.success ? r.data : null;
+  } catch {
+    return null;
+  }
+}
+
 async function base(c: Context<AppEnv>): Promise<Base> {
   const { db, userId } = c.var;
   const settings = await getSettings(db, userId);
@@ -66,23 +103,28 @@ const respond = <T>(schema: { parse: (x: unknown) => T }, value: unknown) => sch
 // ── POST /api/intents ─────────────────────────────────────────────────────────
 
 /** Rows for one confirmed draft. A single line without an amount takes the intent's total. */
-function buildIntent(d: IntentCreate, b: Base, rawText: string, inputMode: "typed" | "browser_stt" | "server_stt", now: number) {
+function buildIntent(d: IntentCreate, b: Base, rawText: string, inputMode: "typed" | "browser_stt" | "server_stt", now: number, decimalDigits: number) {
   const id = newId();
   const expiresAfter = Math.max(b.settings.staleAfterDays, dateWindow(d.merchantKind, b.settings.amazonWindowDays).after);
+  const resolved = d.lines.map((l) => (l.amount !== null && l.amount > 0
+    ? { amount: l.amount, approximate: l.approximate }
+    : { amount: d.totalAmount, approximate: d.approximate }));
+  const pc = precisionColumns({ merchantKind: d.merchantKind, totalAmount: d.totalAmount, approximate: d.approximate, lines: resolved },
+    d.facts ?? null, rawText, decimalDigits);
   const row: typeof intents.$inferInsert = {
     id, userId: b.userId, planId: b.planId, shortRef: newShortRef(), status: "pending", rawText, inputMode,
     payee: d.payee, payeeId: d.payeeId, merchantKind: d.merchantKind, direction: d.direction, intentDate: d.date,
     accountId: d.accountId, accountExplicit: d.accountExplicit && d.accountId !== null,
-    totalAmount: d.totalAmount, tolerance: computeTolerance(d.totalAmount, d.approximate), approximate: d.approximate,
+    totalAmount: d.totalAmount, tolerance: pc.totalTolerance, approximate: d.approximate,
+    ...pc.cols,
     memo: d.memo, placeholderTxnId: null, placeholderStatus: "none", placeholderAmount: null,
     expiresOn: addDays(d.date, expiresAfter), createdAt: now, updatedAt: now, resolvedAt: null,
   };
   const lines: (typeof intentLines.$inferInsert)[] = d.lines.map((l, idx) => {
-    const amount = l.amount !== null && l.amount > 0 ? l.amount : d.totalAmount;
-    const approximate = l.amount !== null && l.amount > 0 ? l.approximate : d.approximate;
+    const r = resolved[idx] ?? { amount: d.totalAmount, approximate: d.approximate };
     return {
-      id: newId(), intentId: id, idx, description: l.description, categoryId: l.categoryId, amount,
-      tolerance: computeTolerance(amount, approximate), approximate, status: "open", matchedTxnId: null,
+      id: newId(), intentId: id, idx, description: l.description, categoryId: l.categoryId, amount: r.amount,
+      tolerance: pc.lineTolerance(idx), approximate: r.approximate, exact: pc.lineExact(idx), status: "open", matchedTxnId: null,
     };
   });
   return { row, lines, createPlaceholder: d.createPlaceholder };
@@ -111,7 +153,8 @@ intentRoutes.post("/intents", validate("json", CreateIntentsReq), async (c) => {
   const body = c.req.valid("json");
   const b = await base(c);
   const now = Date.now();
-  const built = body.intents.map((d) => buildIntent(d, b, body.rawText, body.inputMode, now));
+  const { decimalDigits } = await getCurrency(b.db, b.userId, b.planId);
+  const built = body.intents.map((d) => buildIntent(d, b, body.rawText, body.inputMode, now, decimalDigits));
   const ids = built.map((x) => x.row.id);
   const warnings: string[] = [];
   let inserted = false;
@@ -218,10 +261,21 @@ intentRoutes.patch("/intents/:id", validate("json", UpdateIntentReq), async (c) 
   const approximate = patch.approximate ?? row.approximate;
   const newLines = patch.lines?.map((l, idx) => ({
     id: newId(), intentId: id, idx, description: l.description, categoryId: l.categoryId, amount: l.amount,
-    tolerance: computeTolerance(l.amount, l.approximate), approximate: l.approximate, status: "open" as const, matchedTxnId: null,
+    tolerance: 0, approximate: l.approximate, exact: false, status: "open" as const, matchedTxnId: null,
   }));
   const total = patch.totalAmount ?? (newLines ? newLines.reduce((s, l) => s + l.amount, 0) : row.totalAmount);
   if (newLines && newLines.length === 1 && patch.totalAmount !== undefined && newLines[0]) newLines[0].amount = total;
+  // Precision is re-assessed from the stored note and facts: an edited amount is exact only if it is in the note.
+  const { decimalDigits } = await getCurrency(b.db, b.userId, b.planId);
+  const effLines = newLines ?? lines;
+  const pc = precisionColumns({ merchantKind: row.merchantKind, totalAmount: total, approximate, lines: effLines },
+    storedFacts(row.orderFacts), row.rawText, decimalDigits);
+  newLines?.forEach((l, k) => {
+    l.tolerance = pc.lineTolerance(k);
+    l.exact = pc.lineExact(k);
+  });
+  const lineUpdates = newLines ? [] : lines.map((l, k) => b.db.update(intentLines)
+    .set({ tolerance: pc.lineTolerance(k), exact: pc.lineExact(k) }).where(eq(intentLines.id, l.id)));
   const accountId = patch.accountId !== undefined ? patch.accountId : row.accountId;
   const accountChanged = accountId !== row.accountId;
   const set = {
@@ -230,8 +284,9 @@ intentRoutes.patch("/intents/:id", validate("json", UpdateIntentReq), async (c) 
     accountId,
     accountExplicit: accountId !== null && (patch.accountId !== undefined ? true : row.accountExplicit),
     totalAmount: total,
-    tolerance: computeTolerance(total, approximate),
+    tolerance: pc.totalTolerance,
     approximate,
+    ...pc.cols,
     memo: patch.memo !== undefined ? patch.memo : row.memo,
     expiresOn: patch.date
       ? addDays(date, Math.max(b.settings.staleAfterDays, dateWindow(row.merchantKind, b.settings.amazonWindowDays).after))
@@ -240,7 +295,7 @@ intentRoutes.patch("/intents/:id", validate("json", UpdateIntentReq), async (c) 
   };
   await runBatch(b.db, [
     b.db.update(intents).set(set).where(eq(intents.id, id)),
-    ...(newLines ? [b.db.delete(intentLines).where(eq(intentLines.intentId, id)), b.db.insert(intentLines).values(newLines)] : []),
+    ...(newLines ? [b.db.delete(intentLines).where(eq(intentLines.intentId, id)), b.db.insert(intentLines).values(newLines)] : lineUpdates),
     auditStmt(b.db, { userId: b.userId, actor: "user", action: "intent_updated", intentId: id, summary: `${set.payee} updated` }, now),
   ]);
 

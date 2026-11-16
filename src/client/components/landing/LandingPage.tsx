@@ -67,7 +67,7 @@ export function LandingPage() {
       <main>
         <Hero />
         <Steps />
-        <Feature id="amazon-title" title="One order, three charges." line="Say what's in the box. It's split across every charge.">
+        <Feature id="amazon-title" title="One order, several charges." line="Paste the order page. Each charge gets split.">
           <SplitDemo />
         </Feature>
         <section className="l-section" aria-labelledby="data-title">

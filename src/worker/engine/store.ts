@@ -1,5 +1,6 @@
 // engine/store.ts — WP5 internal D1 helpers shared by the engine and the WP5 routes (not a §8 contract).
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { OrderPlan } from "../../shared/precision";
 import type { Intent, IntentLine } from "../../shared/schemas";
 import { intentLines, intents, matches, reviews, ynabCategories, ynabCategoryGroups } from "../db/schema";
 import type { DIntent, DLine } from "../domain/types";
@@ -48,6 +49,17 @@ export async function getLinesOf(db: DB, intentId: string): Promise<LineRow[]> {
   return (await getLines(db, [intentId])).get(intentId) ?? [];
 }
 
+/** Stored verified order plan (JSON) or null when absent/unreadable. */
+export function parseOrderPlan(json: string | null): OrderPlan | null {
+  if (json === null) return null;
+  try {
+    const r = OrderPlan.safeParse(JSON.parse(json));
+    return r.success ? r.data : null;
+  } catch {
+    return null;
+  }
+}
+
 export function toDLine(l: LineRow): DLine {
   return { id: l.id, categoryId: l.categoryId, amount: l.amount, tolerance: l.tolerance, status: l.status, description: l.description };
 }
@@ -63,6 +75,7 @@ export function toDIntent(r: IntentRow, lines: LineRow[]): DIntent {
     date: r.intentDate, accountId: r.accountId, accountExplicit: r.accountExplicit, total, tolerance,
     status: r.status === "partial" || r.status === "review" ? r.status : "pending",
     placeholderTxnId: r.placeholderTxnId, placeholderStatus: r.placeholderStatus, lines: lines.map(toDLine),
+    order: r.merchantKind === "amazon" && r.precision === "exact" ? parseOrderPlan(r.orderPlan) : null,
   };
 }
 
@@ -79,6 +92,7 @@ export function toIntentDto(r: IntentRow, lines: LineRow[], matchedTxnIds: strin
     rawText: r.rawText, payee: r.payee, payeeId: r.payeeId, merchantKind: r.merchantKind, direction: r.direction,
     date: r.intentDate, accountId: r.accountId, accountExplicit: r.accountExplicit,
     totalAmount: r.totalAmount, tolerance: r.tolerance, approximate: r.approximate, memo: r.memo,
+    precision: { level: r.precision, note: r.precisionNote },
     placeholder: { txnId: r.placeholderTxnId, status: r.placeholderStatus, amount: r.placeholderAmount },
     expiresOn: r.expiresOn, createdAt: r.createdAt, resolvedAt: r.resolvedAt,
     lines: lines.map(toIntentLine), matchedTransactionIds: matchedTxnIds,

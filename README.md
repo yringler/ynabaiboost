@@ -7,11 +7,16 @@ sets the categories (it splits the transaction if the note had several), and rem
 
 It also handles:
 
-- **Amazon orders.** One order that is charged as several shipments is matched to the right charges.
+- **Amazon orders.** Paste the order page (or give exact item prices, tax and the total). When every number checks
+  out against what you pasted and only one assignment fits, each shipment's charge is split by category
+  automatically; otherwise you get a ranked one-tap review. Gift cards and points always go to review.
+- **Precision check.** Claude only extracts facts; deterministic code decides whether an amount is exact (its
+  digits must be in your text). The confirm screen and pending cards show "Exact — will auto-match" or
+  "Approximate — may ask you". Exact amounts are matched to the cent.
 - **Reviews.** When a match is not certain, it asks you instead of guessing.
 
 It runs on one Cloudflare Worker with D1, a React SPA, Workers AI for optional server-side speech-to-text, and
-Claude (`claude-opus-5-5`) using **your own Anthropic API key**. It is not affiliated with or endorsed by YNAB.
+Claude (`claude-sonnet-5-5`) using **your own Anthropic API key**. It is not affiliated with or endorsed by YNAB.
 
 - Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 - Research: [`docs/RESEARCH.md`](docs/RESEARCH.md)

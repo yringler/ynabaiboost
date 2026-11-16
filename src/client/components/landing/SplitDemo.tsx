@@ -1,4 +1,4 @@
-// components/landing/SplitDemo.tsx — LANDING §3.4: one Amazon order, three charges (about 2.1 s, once, starts in view).
+// components/landing/SplitDemo.tsx — LANDING §3.4: one pasted Amazon order, three charges (about 2.1 s, once, starts in view).
 // Same keyframes, tokens and reduced-motion rule as the hero; base styles are the final state.
 import { useInView } from "../../hooks/useInView";
 import { Check } from "./icons";
@@ -11,7 +11,7 @@ const ITEMS = [
 ] as const;
 
 export const SPLIT_LABEL =
-  "You say an Amazon order of about $85 had a phone case, a book and diapers. Three Amazon charges arrive: " +
+  "You paste an Amazon order page for $85.56: a phone case, a book and diapers. Three Amazon charges arrive: " +
   "$24.99, $17.45 and $43.12. Each charge gets its matching item.";
 
 export function SplitDemo() {
@@ -23,7 +23,7 @@ export function SplitDemo() {
           <div className="split-order" style={at(0)}>
             <div className="line">
               <strong>Amazon</strong>
-              <span className="amt">≈ $85</span>
+              <span className="amt">$85.56</span>
             </div>
             <div className="chips">
               {ITEMS.map((x) => (

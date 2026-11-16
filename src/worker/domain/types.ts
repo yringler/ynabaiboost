@@ -1,6 +1,7 @@
 // domain/types.ts — WP5 (DESIGN §10.1). PURE: no I/O, no Env, no Date.now(). Created by WP1.
 import type { Direction } from "../../shared/money";
 import type { Allocation, MerchantKind, PlaceholderStatus, ReviewKind, ReviewOption, Settings } from "../../shared/schemas";
+import type { OrderPlan } from "../../shared/precision";
 import type { YnabTxn } from "../ynab/types";
 
 export interface DLine { id: string; categoryId: string; amount: number; tolerance: number; status: "open" | "matched"; description: string }
@@ -9,6 +10,8 @@ export interface DIntent {
   date: string; accountId: string | null; accountExplicit: boolean;
   total: number; tolerance: number; status: "pending" | "partial" | "review";
   placeholderTxnId: string | null; placeholderStatus: PlaceholderStatus; lines: DLine[];
+  /** Verified Amazon order facts (shared/precision.ts); lines are in idx order, matching the plan's indexes. */
+  order?: OrderPlan | null;
 }
 export type DTxn = YnabTxn;   // from ynab/types.ts (type-only import is allowed)
 export interface ReconcileInput {

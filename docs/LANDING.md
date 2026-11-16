@@ -61,8 +61,10 @@ steps change layout at 720px or wider.
 3. **Done.** Matched and categorized, even if the amount is off.
 
 **Amazon, too**: H2 plus one line and the `SplitDemo` mini-animation (§3.4).
-- H2: **One order, three charges.**
-- Line: *Say what's in the box. It's split across every charge.*
+- H2: **One order, several charges.**
+- Line: *Paste the order page. Each charge gets split.*
+  (Honest scope: charges are split automatically when the pasted page's numbers check out and only one
+  assignment fits; otherwise the user picks from a ranked one-tap review.)
 
 **Your data**: H2 plus two short lines.
 - H2: **Your keys, your budget.**
@@ -134,7 +136,7 @@ base styles are already the final state.
 
 ### 3.4 `SplitDemo` (Amazon, about 2.2 s, starts when scrolled into view)
 
-A card reads **Amazon ≈ $85** with 3 chips: *phone case · book · diapers*. Below it, three rows
+A card reads **Amazon $85.56** (a pasted order page, so exact) with 3 chips: *phone case · book · diapers*. Below it, three rows
 slide in, staggered 150ms: `AMAZON MKTPL −$24.99`, `−$17.45`, `−$43.12`. Then, one row at a
 time (staggered 250ms), the matching chip `rise`s into each row's category slot and a check
 `pop`s. It uses the same keyframes, tokens and reduced-motion rule as the hero.

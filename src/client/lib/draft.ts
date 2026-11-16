@@ -1,6 +1,7 @@
 // lib/draft.ts — WP6: editable form state for one IntentDraft (DraftEditor) and its conversion to IntentCreate.
 // Amounts are kept as the user's text so half-typed values ("12.") don't fight the input.
 import { bestPayeeMatch } from "../../shared/payee";
+import { assessPrecision, precisionInfo, type OrderFacts, type PrecisionInfo } from "../../shared/precision";
 import {
   IntentCreate, type ConfidenceT, type IntentDraft, type MerchantKind, type Payee,
 } from "../../shared/schemas";
@@ -30,6 +31,8 @@ export interface DraftState {
   memo: string;
   lines: LineState[];
   createPlaceholder: boolean;
+  /** Order facts from the parse (unverified; the worker re-checks them against the note). */
+  facts: OrderFacts | null;
 }
 
 let seq = 0;
@@ -47,7 +50,7 @@ export function draftToState(d: IntentDraft, decimals: number, createPlaceholder
     key: newKey("d"), payee: d.payee, payeeId: d.payeeId, merchantKind: d.merchantKind, direction: d.direction,
     date: d.date, accountId: d.accountId, accountExplicit: d.accountExplicit,
     totalText: milliToInput(d.totalAmount, decimals), approximate: d.approximate, memo: d.memo ?? "",
-    lines: d.lines.map((l) => lineFromDraft(l, decimals)), createPlaceholder,
+    lines: d.lines.map((l) => lineFromDraft(l, decimals)), createPlaceholder, facts: d.facts ?? null,
   };
 }
 
@@ -60,7 +63,7 @@ export function emptyDraft(today: string, createPlaceholder: boolean, text = "")
   return {
     key: newKey("d"), payee: "", payeeId: null, merchantKind: "in_person", direction: "outflow", date: today,
     accountId: null, accountExplicit: false, totalText: "", approximate: false, memo: "",
-    lines: [{ ...emptyLine(), description: text.slice(0, 200) }], createPlaceholder,
+    lines: [{ ...emptyLine(), description: text.slice(0, 200) }], createPlaceholder, facts: null,
   };
 }
 
@@ -91,8 +94,30 @@ export function draftSums(d: DraftState, decimals: number): DraftSums {
       linesWithAmount++;
     }
   }
-  const balanced = d.lines.length <= 1 || (linesWithAmount === d.lines.length && total !== null && lineSum === total);
+  const complete = linesWithAmount === d.lines.length && total !== null;
+  const balanced = d.lines.length <= 1 || (complete && total !== null && (lineSum === total || orderBalanced(d, total, lineSum)));
   return { total, lineSum, linesWithAmount, balanced };
+}
+
+/** An Amazon total from an order page includes tax/shipping and promotions on top of the (pre-tax) item prices. */
+function orderBalanced(d: DraftState, total: number, lineSum: number): boolean {
+  const f = d.facts;
+  if (d.merchantKind !== "amazon" || !f) return false;
+  const adj = (f.tax ?? 0) + (f.shipping ?? 0) - (f.discount ?? 0);
+  const gift = f.giftCard ?? 0;
+  if (total === lineSum + adj || total === lineSum + adj - gift) return true;
+  return f.tax === null && f.grandTotal === total && total >= lineSum - (f.discount ?? 0) - gift;
+}
+
+/** Live precision chip for the confirm screen: the same deterministic check the worker runs on save. */
+export function draftPrecision(d: DraftState, rawText: string, decimals: number): PrecisionInfo {
+  const total = parseMoneyInput(d.totalText, decimals);
+  const approximate = d.approximate || hasApproxMarker(d.totalText);
+  const single = d.lines.length === 1;
+  const lines = d.lines.map((l) => (single
+    ? { amount: total, approximate }
+    : { amount: parseMoneyInput(l.amountText, decimals), approximate: l.approximate || hasApproxMarker(l.amountText) }));
+  return precisionInfo(assessPrecision({ merchantKind: d.merchantKind, totalAmount: total, approximate, lines, facts: d.facts }, rawText, decimals));
 }
 
 export type DraftResult = { ok: true; value: IntentCreate } | { ok: false; errors: string[] };
@@ -135,6 +160,7 @@ export function stateToIntentCreate(d: DraftState, decimals: number): DraftResul
     accountId: d.accountId, accountExplicit: d.accountExplicit, totalAmount: total,
     approximate: d.approximate || hasApproxMarker(d.totalText), memo: d.memo.trim() || null,
     lines, createPlaceholder: d.createPlaceholder,
+    ...(d.facts ? { facts: d.facts } : {}),
   };
   const parsed = IntentCreate.safeParse(candidate);
   if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((i) => i.message) };

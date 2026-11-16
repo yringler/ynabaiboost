@@ -48,10 +48,10 @@ beforeEach(async () => {
 });
 
 const parse = (text: string) => call(E, "POST", "/api/intents/parse", { cookie, body: { text, inputMode: "typed" } });
-const line = (o: Record<string, unknown>) => ({ description: "item", category_ref: null, category_confidence: "high", amount: null, amount_is_estimate: false, ...o });
+const line = (o: Record<string, unknown>) => ({ description: "item", category_ref: null, category_confidence: "high", amount: null, amount_is_estimate: false, quantity: 1, ...o });
 const ptxn = (o: Record<string, unknown>) => ({
   payee: "Costco", merchant_kind: "in_person", direction: "outflow", date: today, account_ref: null,
-  total_amount: 200, total_is_approximate: true, memo: null, lines: [], ...o,
+  total_amount: 200, total_is_approximate: true, total_has_cents: false, order: null, clarity_note: null, memo: null, lines: [], ...o,
 });
 
 describe("POST /api/intents/parse", () => {
@@ -68,6 +68,8 @@ describe("POST /api/intents/parse", () => {
         accountId: "acc-visa", accountExplicit: false,              // Costco's last account (lastAccountForPayee)
         totalAmount: 200_000, approximate: true, memo: null,
         lines: [{ description: "groceries", categoryId: "c-groceries", amount: 200_000, approximate: true, confidence: "high" }],
+        facts: expect.objectContaining({ totalHasCents: false, lineAmounts: [200_000] }),
+        precision: { level: "approximate", note: "The amount is approximate" },
       }],
     });
 

@@ -166,7 +166,7 @@ describe("/api/secrets/anthropic", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
     expect(seen?.key).toBe(KEY);
-    expect(seen?.body).toMatchObject({ model: "claude-opus-5-5", messages: [{ role: "user", content: "hi" }] });
+    expect(seen?.body).toMatchObject({ model: "claude-sonnet-5-5", messages: [{ role: "user", content: "hi" }] });
     expect((await getSecret(env, db(), u, "anthropic"))?.value).toBe(KEY);
     const audit = await db().select().from(auditLog).where(and(eq(auditLog.userId, u), eq(auditLog.action, "secret_changed")));
     expect(audit.map((a) => a.summary)).toEqual(["Anthropic API key saved"]);

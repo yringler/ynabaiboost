@@ -146,6 +146,11 @@ CREATE TABLE intents (
   total_amount          INTEGER NOT NULL,                    -- positive milliunits
   tolerance             INTEGER NOT NULL,                    -- milliunits
   approximate           INTEGER NOT NULL,
+  precision             TEXT NOT NULL DEFAULT 'approximate' CHECK (precision IN ('exact','approximate')),
+                                                             -- deterministic (shared/precision.ts), never the model's say-so
+  precision_note        TEXT,                                -- user-facing reason / clarity note
+  order_facts           TEXT,                                -- JSON OrderFacts as Claude reported them (unverified)
+  order_plan            TEXT,                                -- JSON OrderPlan (verified Amazon facts) or NULL
   memo                  TEXT,
   placeholder_txn_id    TEXT,
   placeholder_status    TEXT NOT NULL DEFAULT 'none'
@@ -169,6 +174,7 @@ CREATE TABLE intent_lines (
   amount          INTEGER NOT NULL,                          -- positive milliunits (estimate)
   tolerance       INTEGER NOT NULL,
   approximate     INTEGER NOT NULL,
+  exact           INTEGER NOT NULL DEFAULT 0,                -- amount literally in the user's text (tight tolerance)
   status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','matched')),
   matched_txn_id  TEXT,
   UNIQUE (intent_id, idx)

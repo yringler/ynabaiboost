@@ -178,6 +178,10 @@ export const intents = sqliteTable(
     totalAmount: integer("total_amount").notNull(),
     tolerance: integer("tolerance").notNull(),
     approximate: bool("approximate").notNull(),
+    precision: text("precision", { enum: ["exact", "approximate"] }).notNull().default("approximate"),
+    precisionNote: text("precision_note"),
+    orderFacts: text("order_facts"), // JSON OrderFacts (unverified)
+    orderPlan: text("order_plan"), // JSON OrderPlan (verified) or null
     memo: text("memo"),
     placeholderTxnId: text("placeholder_txn_id"),
     placeholderStatus: text("placeholder_status", {
@@ -205,6 +209,7 @@ export const intentLines = sqliteTable(
     amount: integer("amount").notNull(),
     tolerance: integer("tolerance").notNull(),
     approximate: bool("approximate").notNull(),
+    exact: bool("exact").notNull().default(false),
     status: text("status", { enum: ["open", "matched"] }).notNull().default("open"),
     matchedTxnId: text("matched_txn_id"),
   },

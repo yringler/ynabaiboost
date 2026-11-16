@@ -4,6 +4,7 @@ import type { z } from "zod";
 import { addDays } from "../../shared/dates";
 import { minorUnit, roundToMinor, toMilli, type Direction } from "../../shared/money";
 import { bestPayeeMatch } from "../../shared/payee";
+import { assessPrecision, precisionInfo, type OrderFacts } from "../../shared/precision";
 import { IntentDraft, IsoDate, type IntentLineDraft, type Payee } from "../../shared/schemas";
 import type { Catalog } from "./prompts";
 import type { ParsedTransaction, ParsedUtterance } from "./schemas";
@@ -22,6 +23,8 @@ export interface PostprocessCtx {
   payees: Payee[];                     // getAllPayees, for bestPayeeMatch
   today: string;                       // YYYY-MM-DD in the user's timezone
   decimalDigits: number;
+  /** The user's note (typed, dictated or pasted): the only source an amount can be verified against. */
+  text?: string;
 }
 
 export interface PostprocessResult {
@@ -32,6 +35,29 @@ export interface PostprocessResult {
 }
 
 const clip = (s: string, n = MAX_TEXT) => (s.length > n ? s.slice(0, n) : s);
+const MAX_SHIPMENTS = 10;
+
+/** Model-reported facts → OrderFacts (milliunits, clamped shapes). Still unverified: assessPrecision decides. */
+export function toFacts(t: ParsedTxn, lines: IntentLineDraft[], quantities: number[], dd: number): OrderFacts {
+  const m = (v: number | null | undefined): number | null =>
+    v === null || v === undefined || !Number.isFinite(v) ? null : toPositiveMilli(v, dd);
+  const o = t.order;
+  const n = lines.length;
+  const shipments = (o?.shipments ?? []).slice(0, MAX_SHIPMENTS).map((s) => ({
+    lines: [...new Set(s.line_numbers.filter((k) => Number.isInteger(k) && k >= 1 && k <= n).map((k) => k - 1))].slice(0, 20),
+    total: m(s.total),
+  })).filter((s) => s.lines.length > 0);
+  const note = t.clarity_note?.replace(/\s+/g, " ").trim() ?? "";
+  return {
+    totalHasCents: t.total_has_cents,
+    lineAmounts: lines.map((l) => l.amount),
+    lineQuantities: lines.map((_, k) => Math.min(99, Math.max(1, Math.round(quantities[k] ?? 1)))),
+    itemSubtotal: m(o?.item_subtotal), tax: m(o?.tax), shipping: m(o?.shipping), discount: m(o?.discount),
+    giftCard: m(o?.gift_card), grandTotal: m(o?.grand_total),
+    shipments,
+    clarityNote: note === "" ? null : clip(note),
+  };
+}
 
 /** Currency units → positive milliunits rounded to the plan's minor unit. */
 export const toPositiveMilli = (units: number, decimalDigits: number): number =>
@@ -96,9 +122,11 @@ export function toDraft(t: ParsedTxn, ctx: PostprocessCtx, warnings: string[], n
       confidence: categoryId === null ? "low" : l.category_confidence,
     };
   });
+  let quantities = t.lines.map((l) => (Number.isFinite(l.quantity) ? l.quantity : 1));
   if (lines.length > MAX_LINES) {
     warnings.push(label(`only the first ${MAX_LINES} items were kept`));
     lines = lines.slice(0, MAX_LINES);
+    quantities = quantities.slice(0, MAX_LINES);
   }
   if (lines.length === 0) {
     lines = [{ description: clip(t.memo?.trim() || payee), categoryId: null, amount: totalAmount, approximate, confidence: "low" }];
@@ -106,6 +134,8 @@ export function toDraft(t: ParsedTxn, ctx: PostprocessCtx, warnings: string[], n
 
   // line amounts (§9.4.4)
   const allHaveAmounts = lines.every((l) => l.amount !== null);
+  const grandTotal = t.merchant_kind === "amazon" && t.order?.grand_total != null ? toPositiveMilli(t.order.grand_total, dd) : null;
+  if (totalAmount === null && grandTotal !== null && grandTotal > 0) totalAmount = grandTotal;
   if (totalAmount === null && allHaveAmounts) {
     totalAmount = lines.reduce((s, l) => s + (l.amount ?? 0), 0);
   }
@@ -139,12 +169,14 @@ export function toDraft(t: ParsedTxn, ctx: PostprocessCtx, warnings: string[], n
   const accountId = t.account_ref === null ? null : (ctx.catalog.accountByRef.get(t.account_ref.trim())?.id ?? null);
 
   const memoText = t.memo?.replace(/\s+/g, " ").trim() ?? "";
+  const facts = toFacts(t, lines, quantities, dd);
+  const precision = precisionInfo(assessPrecision({ merchantKind: t.merchant_kind, totalAmount, approximate, lines, facts }, ctx.text ?? "", dd));
   const draft = {
     payee, payeeId, merchantKind: t.merchant_kind, direction, date,
     accountId, accountExplicit: accountId !== null,
     totalAmount, approximate,
     memo: memoText === "" ? null : clip(memoText),
-    lines,
+    lines, facts, precision,
   };
   const checked = IntentDraft.safeParse(draft);
   if (!checked.success) {

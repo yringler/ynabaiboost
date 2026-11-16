@@ -18,6 +18,8 @@ import fixture from "../../fixtures/utterances.json";
 interface ExpectedDraft {
   payee: string; payeeId: string | null; merchantKind: string; direction: "outflow" | "inflow"; dateOffset: number;
   accountId: string | null; totalAmount: number | null; approximate: boolean; categoryIds: string[]; lineCount: number;
+  /** Deterministic precision expected after postprocess (only checked when given). */
+  precision?: "exact" | "approximate";
 }
 interface Case { note: string; status: "ok" | "not_a_transaction" | "needs_clarification"; drafts: ExpectedDraft[] }
 const data = fixture as unknown as {
@@ -37,6 +39,7 @@ export function diffDraft(exp: ExpectedDraft, got: IntentDraft): string[] {
   if (got.totalAmount !== exp.totalAmount) out.push(`total ${got.totalAmount} ≠ ${exp.totalAmount}`);
   if (got.approximate !== exp.approximate) out.push(`approximate ${got.approximate}`);
   if (got.lines.length !== exp.lineCount) out.push(`lines ${got.lines.length} ≠ ${exp.lineCount}`);
+  if (exp.precision !== undefined && got.precision?.level !== exp.precision) out.push(`precision ${got.precision?.level} ≠ ${exp.precision}`);
   const cats = [...new Set(got.lines.flatMap((l) => (l.categoryId ? [l.categoryId] : [])))].sort();
   if (exp.categoryIds.length > 0 && JSON.stringify(cats) !== JSON.stringify([...new Set(exp.categoryIds)].sort())) {
     out.push(`categories ${cats.join(",")} ≠ ${exp.categoryIds.join(",")}`);
@@ -47,6 +50,7 @@ export function diffDraft(exp: ExpectedDraft, got: IntentDraft): string[] {
 describe("utterances.json fixture", () => {
   it("has ~30 cases whose expected ids exist in the fixture catalog", () => {
     expect(cases.length).toBeGreaterThanOrEqual(30);
+    expect(cases.some((c) => c.drafts.some((d) => d.precision === "exact" && d.merchantKind === "amazon"))).toBe(true);
     const catIds = new Set(cat.categories.map((c) => c.id));
     const accIds = new Set(cat.accounts.map((a) => a.id));
     const payeeIds = new Set(cat.payees.map((p) => p.id));
@@ -82,7 +86,7 @@ describe.skipIf(!live)("live parse eval (real API, not CI)", () => {
         report.push(`✗ ${c.note}\n    error: ${String(parsed)}`);
         continue;
       }
-      const r = toDrafts(parsed as Parameters<typeof toDrafts>[0], { catalog: rendered, payees: cat.payees, today: cat.today, decimalDigits: cat.currency.decimalDigits });
+      const r = toDrafts(parsed as Parameters<typeof toDrafts>[0], { catalog: rendered, payees: cat.payees, today: cat.today, decimalDigits: cat.currency.decimalDigits, text: c.note });
       const problems: string[] = [];
       if (r.status !== c.status) problems.push(`status ${r.status} ≠ ${c.status}`);
       else if (c.status === "ok") {

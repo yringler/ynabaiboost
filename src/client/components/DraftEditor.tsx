@@ -3,12 +3,13 @@
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useId } from "react";
 import type { Catalog } from "../hooks/useCatalog";
-import { draftSums, emptyLine, resolvePayeeId, type DraftState } from "../lib/draft";
+import { draftPrecision, draftSums, emptyLine, resolvePayeeId, type DraftState } from "../lib/draft";
 import { formatMoney, milliToInput } from "../lib/format";
 import { cn } from "../lib/utils";
 import { AccountSelect } from "./AccountSelect";
 import { LineRow } from "./LineRow";
 import { MoneyInput } from "./MoneyInput";
+import { PrecisionChip } from "./PrecisionChip";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
@@ -24,12 +25,15 @@ export interface DraftEditorProps {
   /** settings.createPlaceholders; when false the per-intent toggle is shown disabled. */
   placeholdersEnabled: boolean;
   errors?: string[];
+  /** The note the draft came from: the precision chip checks amounts against it (same rule as the worker). */
+  rawText?: string;
 }
 
-export function DraftEditor({ draft, onChange, onRemove, catalog, placeholdersEnabled, errors = [] }: DraftEditorProps) {
+export function DraftEditor({ draft, onChange, onRemove, catalog, placeholdersEnabled, errors = [], rawText = "" }: DraftEditorProps) {
   const id = useId();
   const decimals = catalog.currency.decimalDigits;
   const sums = draftSums(draft, decimals);
+  const precision = draftPrecision(draft, rawText, decimals);
   const multi = draft.lines.length > 1;
   const account = draft.accountId ? catalog.accounts.find((a) => a.id === draft.accountId) : undefined;
   const finalEntry = account !== undefined && !account.directImportLinked;
@@ -92,6 +96,8 @@ export function DraftEditor({ draft, onChange, onRemove, catalog, placeholdersEn
           </div>
         </div>
 
+        <PrecisionChip precision={precision} />
+
         <div className="flex flex-col gap-1">
           <Label htmlFor={`${id}-account`}>Account</Label>
           <AccountSelect
@@ -114,6 +120,7 @@ export function DraftEditor({ draft, onChange, onRemove, catalog, placeholdersEn
               >
                 {formatMoney(sums.lineSum, catalog.currency)}
                 {sums.total !== null && ` of ${formatMoney(sums.total, catalog.currency)}`}
+                {sums.balanced && sums.total !== null && sums.lineSum !== sums.total && " with tax"}
               </span>
             )}
           </div>

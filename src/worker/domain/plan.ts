@@ -3,6 +3,7 @@ import { diffDays } from "../../shared/dates";
 import { payeeSimilarity } from "../../shared/payee";
 import { allocate } from "./allocate";
 import { dateWindow, inWindow } from "./dates";
+import { exactFitsAny, exactRange, predictGroups, solveExact } from "./exact";
 import { fmtAmount, fmtDate, txnPayee } from "./labels";
 import { hasTag } from "./memo";
 import {
@@ -21,10 +22,14 @@ const byDateId = <T extends { id: string }>(date: (x: T) => string) => (a: T, b:
 
 const number = (opts: PlannedOption[]): PlannedOption[] => opts.map((o, k) => ({ ...o, id: `o${k + 1}` }));
 
-/** Does a charge also fit another open Amazon intent (any subset of its open lines)? */
-function fitsOtherAmazon(i: DIntent, t: DTxn, pool: DIntent[], maxTaxRate: number): boolean {
-  return pool.some((o) => o.id !== i.id && o.merchantKind === "amazon" && o.direction === i.direction
-    && anySubsetFits(Math.abs(t.amount), openLines(o), maxTaxRate));
+/** Does a charge also fit another open Amazon intent (any subset of its open lines)? An intent with a verified
+ *  order plan is judged by its predicted charges (§10.6a), the others by the loose tax range. */
+function fitsOtherAmazon(i: DIntent, t: DTxn, pool: DIntent[], maxTaxRate: number, decimalDigits: number): boolean {
+  return pool.some((o) => {
+    if (o.id === i.id || o.merchantKind !== "amazon" || o.direction !== i.direction) return false;
+    const groups = o.order ? predictGroups(o, decimalDigits) : null;
+    return groups ? exactFitsAny(Math.abs(t.amount), groups) : anySubsetFits(Math.abs(t.amount), openLines(o), maxTaxRate);
+  });
 }
 
 export function planReconciliation(input: ReconcileInput): Decision[] {
@@ -35,6 +40,7 @@ export function planReconciliation(input: ReconcileInput): Decision[] {
   const byId = new Map(txns.map((t) => [t.id, t]));
   const amazonPool = [...intents, ...input.otherOpenAmazonIntents].filter((i) => i.merchantKind === "amazon");
   const done = new Set<string>();      // intents with a decision in this run
+  const exactMiss = new Set<string>(); // intents with verified order facts that the exact pass did not resolve
   const used = new Set<string>();      // txns claimed in this run
   const alloc = (t: DTxn, i: DIntent, lines = openLines(i)) => allocate(Math.abs(t.amount), lines, i.direction, decimalDigits);
   const desc = (i: DIntent) => `${i.payee} ~${fmtAmount(i.total, decimalDigits)} (${fmtDate(i.date)})`;
@@ -91,7 +97,39 @@ export function planReconciliation(input: ReconcileInput): Decision[] {
     });
   }
 
-  // ── 2. Amazon multi-item intents (§10.6) ──
+  // ── 2a. Amazon orders with verified facts (§10.6a): auto-resolve only a unique, consistent explanation ──
+  for (const i of intents) {
+    if (done.has(i.id) || i.merchantKind !== "amazon" || !i.order || openLines(i).length === 0) continue;
+    const groups = predictGroups(i, decimalDigits);
+    if (!groups || groups.length === 0) {
+      exactMiss.add(i.id);
+      continue;
+    }
+    const { lo, hi } = exactRange(groups);
+    const pool = txns.filter((t) => {
+      if (used.has(t.id) || !baseCandidate(i, t, input)) return false;
+      const abs = Math.abs(t.amount);
+      return payeeSimilarity(i.payee, txnNames(t)) >= AMAZON_PAYEE_MIN && diffDays(t.date, i.date) >= -2 && lo <= abs && abs <= hi;
+    });
+    // More candidates than we can examine: a charge we did not look at could be an equally good explanation.
+    const res = pool.length > MAX_CHARGES ? { kind: "ambiguous" as const } : solveExact(i, groups, pool, decimalDigits);
+    const ok = res.kind === "auto" && res.parts.every((p) => !isApprovedImport(p.txn, input.uncategorizedIds)
+      && !fitsOtherAmazon(i, p.txn, amazonPool, settings.maxTaxRate, decimalDigits));
+    if (!ok || res.kind !== "auto") {
+      exactMiss.add(i.id);
+      continue;
+    }
+    for (const p of res.parts) {
+      out.push({
+        kind: "apply", intentId: i.id, txnId: p.txn.id, lineIds: p.lines.map((l) => l.id), allocation: alloc(p.txn, i, p.lines),
+        score: 1, matchKind: "amazon_subset",
+      });
+      used.add(p.txn.id);
+    }
+    done.add(i.id);
+  }
+
+  // ── 2b. Amazon multi-item intents (§10.6) ──
   for (const i of intents) {
     const R = openLines(i);
     if (done.has(i.id) || i.merchantKind !== "amazon" || R.length < 2) continue;
@@ -114,10 +152,11 @@ export function planReconciliation(input: ReconcileInput): Decision[] {
       .sort((a, b) => Math.abs(diffDays(a.date, i.date)) - Math.abs(diffDays(b.date, i.date)) || a.date.localeCompare(b.date) || a.id.localeCompare(b.id))
       .slice(0, MAX_CHARGES);
 
-    // 1) the whole remaining order in one charge, uniquely: the only automatic path
+    // 1) the whole remaining order in one charge, uniquely: the only loose automatic path. Not for orders with
+    //    verified facts: if 2a could not explain the charges exactly, a loose fit is no evidence.
     const W = C.filter((c) => fits(Math.abs(c.amount), R, settings.maxTaxRate));
     const w0 = W[0];
-    if (W.length === 1 && w0 && !isApprovedImport(w0, input.uncategorizedIds) && !fitsOtherAmazon(i, w0, amazonPool, settings.maxTaxRate)) {
+    if (!exactMiss.has(i.id) && W.length === 1 && w0 && !isApprovedImport(w0, input.uncategorizedIds) && !fitsOtherAmazon(i, w0, amazonPool, settings.maxTaxRate, decimalDigits)) {
       out.push({
         kind: "apply", intentId: i.id, txnId: w0.id, lineIds: R.map((l) => l.id), allocation: alloc(w0, i, R),
         score: 1, matchKind: "amazon_subset",
@@ -132,7 +171,7 @@ export function planReconciliation(input: ReconcileInput): Decision[] {
     if (opts.length === 0) continue; // charges not here yet
     const everyFitsOther = opts.every((o) => {
       const c = byId.get(o.transactionId);
-      return c !== undefined && fitsOtherAmazon(i, c, amazonPool, settings.maxTaxRate);
+      return c !== undefined && fitsOtherAmazon(i, c, amazonPool, settings.maxTaxRate, decimalDigits);
     });
     const keyId = opts[0]?.transactionId;
     const key = keyId !== undefined ? byId.get(keyId) : undefined;
@@ -189,9 +228,9 @@ export function planReconciliation(input: ReconcileInput): Decision[] {
       if (q.i === p.i && q.t !== p.t && !assignedT.has(q.t.id)) secondI = Math.max(secondI, q.d.score);
       if (q.t === p.t && q.i !== p.i && !assignedI.has(q.i.id)) secondT = Math.max(secondT, q.d.score);
     }
-    const amazonGuard = p.i.merchantKind === "amazon" && fitsOtherAmazon(p.i, p.t, amazonPool, settings.maxTaxRate);
+    const amazonGuard = p.i.merchantKind === "amazon" && fitsOtherAmazon(p.i, p.t, amazonPool, settings.maxTaxRate, decimalDigits);
     const open = openLines(p.i);
-    if (s >= AUTO && s - secondI >= MARGIN && s - secondT >= MARGIN && !p.d.reviewOnly && !amazonGuard) {
+    if (s >= AUTO && s - secondI >= MARGIN && s - secondT >= MARGIN && !p.d.reviewOnly && !amazonGuard && !exactMiss.has(p.i.id)) {
       out.push({
         kind: "apply", intentId: p.i.id, txnId: p.t.id, lineIds: open.map((l) => l.id), allocation: alloc(p.t, p.i, open),
         score: s, matchKind: open.length > 1 ? "split" : "single",

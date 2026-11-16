@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { Category, CurrencyFormat, Intent } from "../../shared/schemas";
 import { formatApprox, formatDate } from "../lib/format";
 import { cn } from "../lib/utils";
+import { PrecisionChip } from "./PrecisionChip";
 import { Badge } from "./ui/badge";
 
 export const PLACEHOLDER_LABEL: Record<Intent["placeholder"]["status"], string> = {
@@ -72,6 +73,7 @@ export function IntentCard({ intent, currency, categories, onOpen, actions }: In
             {progress && <span>{progress}</span>}
             {intent.placeholder.status !== "none" && <span>{PLACEHOLDER_LABEL[intent.placeholder.status]}</span>}
           </div>
+          {(intent.status === "pending" || intent.status === "partial") && <PrecisionChip precision={intent.precision} className="pt-1" />}
         </div>
         <ChevronRightIcon className="mt-1 size-4 shrink-0 text-muted-foreground" />
       </button>

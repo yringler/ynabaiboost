@@ -102,6 +102,75 @@ const create = (...ds: Record<string, unknown>[]) => req("POST", "/api/intents",
 const seed = (s: Parameters<typeof seedIntent>[1]) => seedIntent(userId, s, (a, x) => T.computeTolerance(a, x));
 const row = async (id: string) => (await db().select().from(intents).where(eq(intents.id, id)).get())!;
 
+describe("precision-aware intents (§9.5, §10.6a)", () => {
+  const PAGE = "Order placed\nUSB charger $24.99\nNovel $15.99\nItem(s) Subtotal: $40.98\nEstimated tax: $3.28\nGrand Total: $44.26\nVisa ending in 4242";
+  const facts = (over: Record<string, unknown> = {}) => ({
+    totalHasCents: true, lineAmounts: [24990, 15990], lineQuantities: [1, 1], itemSubtotal: 40980, tax: 3280, shipping: null,
+    discount: null, giftCard: null, grandTotal: 44260, shipments: [], clarityNote: "All set.", ...over,
+  });
+  const amazonDraft = (over: Record<string, unknown> = {}) => draft({
+    payee: "Amazon", merchantKind: "amazon", totalAmount: 44260, approximate: false, facts: facts(),
+    precision: { level: "exact", note: "client-supplied values are ignored" },
+    lines: [
+      { description: "USB charger", categoryId: "cat-elec", amount: 24990, approximate: false, confidence: "high" },
+      { description: "novel", categoryId: "cat-books", amount: 15990, approximate: false, confidence: "high" },
+    ],
+    ...over,
+  });
+  const createRaw = (rawText: string, ...ds: Record<string, unknown>[]) => req("POST", "/api/intents", { intents: ds, rawText, inputMode: "typed" });
+
+  it("stores the deterministic precision, the verified plan and tight tolerances", async () => {
+    const body = CreateIntentsRes.parse((await createRaw(PAGE, amazonDraft())).json);
+    const i = body.intents[0]!;
+    expect(i.precision).toEqual({ level: "exact", note: "All set." });
+    expect(i.tolerance).toBe(10);
+    expect(i.lines.map((l) => l.tolerance)).toEqual([10, 10]);
+    const r = await row(i.id);
+    expect(JSON.parse(r.orderPlan ?? "null")).toEqual({ cardTotal: 44260, tax: 3280, shipping: 0, discount: 0, shipments: null });
+    const ls = await db().select().from(intentLines).where(eq(intentLines.intentId, i.id)).all();
+    expect(ls.map((l) => l.exact)).toEqual([true, true]);
+  });
+
+  it("the server re-checks the facts against rawText: a client claiming 'exact' without the page gets approximate", async () => {
+    const body = CreateIntentsRes.parse((await createRaw("amazon charger and a novel", amazonDraft())).json);
+    expect(body.intents[0]?.precision.level).toBe("approximate");
+    expect((await row(body.intents[0]!.id)).orderPlan).toBeNull();
+  });
+
+  it("an exact-cents non-Amazon intent gets a one-cent tolerance", async () => {
+    const body = CreateIntentsRes.parse((await createRaw("Costco 187.65", draft({ totalAmount: 187650, approximate: false, lines: [
+      { description: "groceries", categoryId: "cat-groceries", amount: null, approximate: false, confidence: null },
+    ] }))).json);
+    expect(body.intents[0]).toMatchObject({ tolerance: 10, precision: { level: "exact" } });
+  });
+
+  it("both charges already imported → auto-split at creation, resolved, live re-read before each write", async () => {
+    m.imports = [
+      mkTxn({ id: uid("c1"), date: TODAY, amount: -26990, importPayeeName: "AMZN Mktp US*1A2B3" }),
+      mkTxn({ id: uid("c2"), date: TODAY, amount: -17270, importPayeeName: "AMZN Mktp US*9Z8Y7" }),
+    ];
+    const body = CreateIntentsRes.parse((await createRaw(PAGE, amazonDraft({ date: YESTERDAY }))).json);
+    expect(body.intents[0]).toMatchObject({ status: "resolved", placeholder: { status: "none" } });
+    expect(body.intents[0]?.matchedTransactionIds).toHaveLength(2);
+    expect(fake.callsOf("getTransaction")).toHaveLength(2);
+    const ups = fake.callsOf("updateTransactions").map((c) => (c.args[1] as { categoryId?: string }[])[0]?.categoryId);
+    expect(ups).toEqual(["cat-elec", "cat-books"]);
+    const ms = await db().select().from(matches).where(eq(matches.intentId, body.intents[0]!.id)).all();
+    expect(ms.map((x) => [x.kind, x.state])).toEqual([["amazon_subset", "applied"], ["amazon_subset", "applied"]]);
+  });
+
+  it("PATCH re-assesses: an amount that is not in the note downgrades to approximate", async () => {
+    const i = CreateIntentsRes.parse((await createRaw(PAGE, amazonDraft({ createPlaceholder: false }))).json).intents[0]!;
+    const r = await req("PATCH", `/api/intents/${i.id}`, { lines: [
+      { description: "USB charger", categoryId: "cat-elec", amount: 25990, approximate: false, confidence: null },
+      { description: "novel", categoryId: "cat-books", amount: 15990, approximate: false, confidence: null },
+    ] });
+    expect(r.status).toBe(200);
+    expect(IntentRes.parse(r.json).intent.precision.level).toBe("approximate");
+    expect((await row(i.id)).orderPlan).toBeNull();
+  });
+});
+
 describe("POST /api/intents (§10.7)", () => {
   it("no import yet → intent pending with a placeholder", async () => {
     const r = await create(draft());

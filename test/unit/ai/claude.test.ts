@@ -59,7 +59,7 @@ describe("callStructured request", () => {
       kind: "message",
       body: messageBody([
         { type: "text", text: '{"answer":"par', citations: null },
-        { type: "fallback", from: { model: "claude-opus-5-5" }, to: { model: "claude-opus-5" } },
+        { type: "fallback", from: { model: "claude-sonnet-5-5" }, to: { model: "claude-sonnet-5" } },
         { type: "text", text: '{"answer":"rescued","n":null}', citations: null },
       ], "end_turn", { usage: { input_tokens: 1, output_tokens: 1, iterations: [{ type: "fallback_message" }] } }),
     });

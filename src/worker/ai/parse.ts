@@ -48,7 +48,7 @@ export async function parseUtterance(ctx: AiCtx, text: string): Promise<z.infer<
     ...PARSE_CALL,
   });
 
-  const result = toDrafts(parsed, { catalog, payees: allPayees, today, decimalDigits: currency.decimalDigits });
+  const result = toDrafts(parsed, { catalog, payees: allPayees, today, decimalDigits: currency.decimalDigits, text });
 
   // §9.4.6: no explicit account → the payee's last account, then the default account (accountExplicit=false).
   const openAccountIds = new Set(accounts.map((a) => a.id));

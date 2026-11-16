@@ -17,3 +17,13 @@ export function computeTolerance(a: number, approximate: boolean): number {
   const tol = Math.max(u / 2, Math.round(0.05 * a), 1000);
   return Math.min(tol, Math.round(0.35 * a));
 }
+
+/** Tolerance for an amount the user wrote with its exact minor units (DESIGN §10.2, §9.5): one minor unit. */
+export function exactTolerance(decimalDigits: number): number {
+  return 10 ** Math.max(0, 3 - decimalDigits);
+}
+
+/** The intent/line tolerance: tight for verified exact amounts, roundness-based otherwise. */
+export function toleranceFor(a: number, approximate: boolean, exact: boolean, decimalDigits: number): number {
+  return exact && !approximate ? exactTolerance(decimalDigits) : computeTolerance(a, approximate);
+}

@@ -18,7 +18,7 @@ import { validate } from "../lib/validate";
 import { requireJson } from "../middleware/requireJson";
 
 const ok = { ok: true as const };
-export const ANTHROPIC_CHECK_MODEL = "claude-opus-5-5";
+export const ANTHROPIC_CHECK_MODEL = "claude-sonnet-5-5";
 
 /** Checks an Anthropic key with a free countTokens call (DESIGN §12 WP2). */
 export async function checkAnthropicKey(apiKey: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { draftSums, draftToState, emptyDraft, resolvePayeeId, stateToIntentCreate, type DraftState } from "../../src/client/lib/draft";
+import { draftPrecision, draftSums, draftToState, emptyDraft, resolvePayeeId, stateToIntentCreate, type DraftState } from "../../src/client/lib/draft";
 import type { IntentDraft } from "../../src/shared/schemas";
 
 const base: IntentDraft = {
@@ -74,5 +74,19 @@ describe("draft state", () => {
     expect(resolvePayeeId("Costco", payees)).toBe("p1");
     expect(resolvePayeeId("Some new shop", payees)).toBeNull();
     expect(resolvePayeeId("  ", payees)).toBeNull();
+  });
+
+  it("carries order facts to IntentCreate; an Amazon total with tax balances against items + tax", () => {
+    const facts = { totalHasCents: true, lineAmounts: [20_000, 15_000, 50_000], lineQuantities: [1, 1, 1], itemSubtotal: null,
+      tax: 6_800, shipping: null, discount: null, giftCard: null, grandTotal: 91_800, shipments: [], clarityNote: null };
+    const s = draftToState({ ...base, totalAmount: 91_800, approximate: false, facts }, 2, true);
+    expect(draftSums(s, 2).balanced).toBe(true);
+    const r = stateToIntentCreate(s, 2);
+    expect(r.ok && r.value.facts).toEqual(facts);
+    expect(draftPrecision(s, "case 20.00 book 15.00 diapers 50.00 tax 6.80 total 91.80", 2).level).toBe("approximate"); // lines flagged ≈ in base
+    const exact = { ...s, lines: s.lines.map((l) => ({ ...l, approximate: false })) };
+    expect(draftPrecision(exact, "case 20.00 book 15.00 diapers 50.00 tax 6.80 total 91.80", 2).level).toBe("exact");
+    // without facts the old rule stands
+    expect(draftSums({ ...s, facts: null }, 2).balanced).toBe(false);
   });
 });

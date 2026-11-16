@@ -113,7 +113,7 @@ describe("LandingPage", () => {
     expect(screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent)).toEqual(["Say what you spent."]);
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
       "How it works",
-      "One order, three charges.",
+      "One order, several charges.",
       "Your keys, your budget.",
       "Try it on your next receipt.",
     ]);

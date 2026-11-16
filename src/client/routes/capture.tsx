@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import type { z } from "zod";
 import type { CreateIntentsRes, ParseRes } from "../../shared/api";
 import { todayIn } from "../../shared/dates";
+import { MAX_NOTE_CHARS } from "../../shared/precision";
 import type { InputMode, Intent } from "../../shared/schemas";
 import { PageTitle } from "../components/Page";
 import { DraftEditor } from "../components/DraftEditor";
@@ -59,7 +60,7 @@ export function CapturePage() {
   const speech = useSpeechInput({
     preferServer: !!me?.sttAllowed && settings?.voiceMode === "server",
     onText: useCallback((t: string, source: "browser_stt" | "server_stt") => {
-      setText((prev) => appendText(prev, t).slice(0, 2000));
+      setText((prev) => appendText(prev, t).slice(0, MAX_NOTE_CHARS));
       setInputMode(source);
     }, []),
   });
@@ -108,7 +109,7 @@ export function CapturePage() {
       setErrors(errs);
       if (Object.keys(errs).length > 0) return Promise.reject(new Error("Fix the highlighted fields"));
       const intents = built.flatMap(({ r }) => (r.ok ? [r.value] : []));
-      return call("createIntents", { body: { intents, rawText: rawText.slice(0, 2000), inputMode } });
+      return call("createIntents", { body: { intents, rawText: rawText.slice(0, MAX_NOTE_CHARS), inputMode } });
     },
     onSuccess: async (res) => {
       const msgs = [...new Set(res.intents.map(savedMessage))];
@@ -129,7 +130,7 @@ export function CapturePage() {
     const t = text.trim();
     if (!t || parse.isPending) return;
     if (speech.state === "listening") speech.stop();
-    parse.mutate({ text: t.slice(0, 2000), inputMode });
+    parse.mutate({ text: t.slice(0, MAX_NOTE_CHARS), inputMode });
   };
 
   const enterManually = () => {
@@ -160,7 +161,7 @@ export function CapturePage() {
               aria-label="What did you spend?"
               placeholder="About 200 at Costco, groceries and a phone case for 25"
               value={text}
-              maxLength={2000}
+              maxLength={MAX_NOTE_CHARS}
               onChange={(e) => {
                 setText(e.target.value);
                 if (!e.target.value) setInputMode("typed");
@@ -171,7 +172,7 @@ export function CapturePage() {
                   doParse();
                 }
               }}
-              className="min-h-36 resize-none text-base"
+              className="max-h-80 min-h-36 resize-none text-base"
               disabled={parse.isPending}
             />
             {speech.interim && (
@@ -197,6 +198,9 @@ export function CapturePage() {
               </Button>
             )}
           </div>
+          <p className="text-xs text-muted-foreground" data-testid="paste-hint">
+            Amazon order? Paste the order page here for exact matching.
+          </p>
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span className="hidden sm:inline">⌘/Ctrl + Enter to parse</span>
             <button type="button" className="min-h-11 underline-offset-4 hover:underline" onClick={enterManually}>
@@ -222,7 +226,11 @@ export function CapturePage() {
 
       {hasDrafts && (
         <div className="flex flex-col gap-3">
-          {rawText && <p className="text-sm text-muted-foreground">“{rawText}”</p>}
+          {rawText && (
+            <p className="line-clamp-3 text-sm break-words text-muted-foreground" title={rawText.length > 300 ? undefined : rawText}>
+              “{rawText.length > 300 ? `${rawText.slice(0, 300).trimEnd()}…` : rawText}”
+            </p>
+          )}
           {warnings.length > 0 && (
             <ul className="flex flex-col gap-1 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn" role="status">
               {warnings.map((w) => <li key={w}>{w}</li>)}
@@ -238,6 +246,7 @@ export function CapturePage() {
                 catalog={catalog.data}
                 placeholdersEnabled={placeholdersEnabled}
                 errors={errors[d.key] ?? []}
+                rawText={rawText}
                 onChange={(nd) => setDrafts((all) => all.map((x, j) => (j === i ? nd : x)))}
                 {...(drafts.length > 1 ? { onRemove: () => setDrafts((all) => all.filter((_, j) => j !== i)) } : {})}
               />

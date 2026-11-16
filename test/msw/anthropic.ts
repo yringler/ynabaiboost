@@ -29,7 +29,7 @@ export function messageBody(content: unknown[], stopReason: string, extra: Recor
     id: `msg_test_${++msgSeq}`,
     type: "message",
     role: "assistant",
-    model: "claude-opus-5-5",
+    model: "claude-sonnet-5-5",
     content,
     stop_reason: stopReason,
     stop_sequence: null,
